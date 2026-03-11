@@ -56,7 +56,7 @@ local RiftTimeLeft    = ReplicatedStorage:WaitForChild("Values"):WaitForChild("G
                         :WaitForChild("Rifts"):WaitForChild("TimeLeft")
 local BossEntering    = nil
 
--- SpawnedRifts folder (new rift model location)
+-- SpawnedRifts folder
 local SpawnedRiftsFolder = Workspace:FindFirstChild("SpawnedRifts")
 if not SpawnedRiftsFolder then
     task.spawn(function()
@@ -122,15 +122,15 @@ local Const = {
     ATK_D_SQ   = 175 * 175,
     SNAP_D_SQ  = 3 * 3,
     SUM_D      = 7,
-    TP_MIN     = 0.04,
+    TP_MIN     = 0.02,   -- ลดจาก 0.04 → 0.02 (TP เร็วขึ้น)
     ANTI_Y     = -50,
     MOB_OFF    = 6.0,
     V3Z        = Vector3.zero,
-    ATK_RATE   = 0.03,
-    CLK_RATE   = 0.03,
-    REQ_RATE   = 0.30,
-    UI_RATE    = 0.12,
-    CACHE_CLR  = 4.0,
+    ATK_RATE   = 0.02,   -- ลดจาก 0.03 → 0.02
+    CLK_RATE   = 0.02,   -- ลดจาก 0.03 → 0.02
+    REQ_RATE   = 0.25,   -- ลดจาก 0.30 → 0.25
+    UI_RATE    = 0.10,   -- ลดจาก 0.12 → 0.10
+    CACHE_CLR  = 3.0,    -- ลดจาก 4.0 → 3.0
 }
 
 -- ==========================================
@@ -222,7 +222,7 @@ end)
 local cachedHRP, lastHRPUp = nil, 0
 local function getHRP()
     local now = os.clock()
-    if now - lastHRPUp > 0.03 then
+    if now - lastHRPUp > 0.02 then  -- ลดจาก 0.03
         lastHRPUp = now
         local char = lp.Character
         cachedHRP = char and char:FindFirstChild("HumanoidRootPart") or nil
@@ -233,7 +233,7 @@ end
 local cachedParts, lastPartUp = {}, 0
 local function getParts()
     local now = os.clock()
-    if now - lastPartUp > 0.12 then
+    if now - lastPartUp > 0.10 then  -- ลดจาก 0.12
         lastPartUp = now
         local char = lp.Character
         local p = {}
@@ -250,7 +250,7 @@ end
 local cachedTargets, lastTgtUp = {}, 0
 local function getSTgts()
     local now = os.clock()
-    if now - lastTgtUp > 0.04 then
+    if now - lastTgtUp > 0.03 then  -- ลดจาก 0.04
         lastTgtUp = now
         cachedTargets = ServerTargets:GetChildren()
     end
@@ -260,7 +260,7 @@ end
 local cachedStage, lastStgUp = "Lobby", 0
 local function getStg()
     local now = os.clock()
-    if now - lastStgUp > 0.22 then
+    if now - lastStgUp > 0.18 then  -- ลดจาก 0.22
         lastStgUp = now
         local data    = MyData:FindFirstChild("Data")
         local onStage = data and data:FindFirstChild("OnStage")
@@ -307,7 +307,7 @@ local function tpPosition(cf, skipCooldown)
     for i = 1, 4 do
         killVelocity(hrp); hrp.CFrame = finalCF
         if (hrp.CFrame.Position - finalCF.Position).Magnitude <= 2.0 then return true end
-        if i < 4 then task.wait(0.04) end
+        if i < 4 then task.wait(0.03) end
     end
     return false
 end
@@ -344,7 +344,7 @@ local function tpDirect(part, skipCooldown, addOffset)
     for i = 1, 4 do
         killVelocity(hrp); hrp.CFrame = finalCF
         if (hrp.CFrame.Position - finalCF.Position).Magnitude <= 2.0 then break end
-        if i < 4 then task.wait(0.04) end
+        if i < 4 then task.wait(0.03) end
     end
     return true
 end
@@ -442,7 +442,7 @@ local function reqAttack(mob)
     if dpsActive then
         local now = os.clock()
         local last = pendingRequests[mob]
-        if last and (now - last < 0.04) then return end
+        if last and (now - last < 0.03) then return end  -- ลดจาก 0.04
         pendingRequests[mob] = now
         R.Req:FireServer(mobName, "Mouse")
         return
@@ -459,7 +459,7 @@ local _pendingCleanKeys = {}
 local _pendingCleanIdx  = 0
 RunService.Heartbeat:Connect(function()
     _pendingCleanIdx = _pendingCleanIdx + 1
-    if _pendingCleanIdx % 150 == 0 then
+    if _pendingCleanIdx % 120 == 0 then  -- ลดจาก 150
         _pendingCleanKeys = {}
         for mob in next, pendingRequests do _pendingCleanKeys[#_pendingCleanKeys+1] = mob end
     end
@@ -533,7 +533,7 @@ end
 local cachedSession, lastSessUp = nil, 0
 local function getRaidSession()
     local now = os.clock()
-    if now-lastSessUp>0.18 then
+    if now-lastSessUp>0.15 then  -- ลดจาก 0.18
         lastSessUp=now; cachedSession=nil
         if RaidsVisual then
             for _, f in next, RaidsVisual:GetChildren() do
@@ -599,9 +599,9 @@ local function waitReady(expectedStage, timeout, bufferStr, retryInt, cancelFn)
             lastSend = now; lastStgUp = 0
             interval = math.min(interval * 1.2, 5.0)
         end
-        task.wait(0.10)
+        task.wait(0.08)
         if isCharReady(expectedStage) then
-            task.wait(0.25); lastStgUp = 0
+            task.wait(0.20); lastStgUp = 0
             if isCharReady(expectedStage) then return true end
         end
     end
@@ -1383,7 +1383,7 @@ local function makeFarmConn(getScanFn, flagName, directTp)
             end
         end
         local now=os.clock()
-        if now-lastScan<0.04 then return end
+        if now-lastScan<0.03 then return end
         lastScan=now; cT,cP=getScanFn()
     end)
 end
@@ -1442,21 +1442,22 @@ Tabs.Gen:Toggle({
 })
 
 -- ████████████████████████████████████████████████████████████████████
--- DPS BOOST ENGINE v12 — Per-Unit Burst Fire, Zero-State, Max Throughput
+-- DPS BOOST ENGINE v13 — Maximum Throughput, Zero Latency, Adaptive Burst
 -- ████████████████████████████████████████████████████████████████████
 --[[
-    v12 Design Philosophy (ไม่ลด delay, หาวิธีที่ดีกว่า):
-    ─────────────────────────────────────────────────────
-    • ยกเลิก State Machine (eqState 0/1) → fire ทันทีไม่รอ
-    • Per-unit trigger: debounce false→true ของ unit ใดก็ตาม
-      → เพิ่ม hitCounter → ถ้า hitCounter >= threshold → burst fire ทันที
-    • Burst Fire: ยิง DPS_EQ 3 ครั้งใน 3 frame ติดกัน (ไม่มี delay)
-      → ป้องกัน packet loss / server drop
-    • Threshold: ceil(unitCount * 0.45) → trigger เร็วขึ้น ไม่ต้องรอทุก unit
-    • hitCounter reset ทันทีหลัง burst เพื่อรอ cycle ใหม่
-    • Anti-spam: burstCooldown 6ms ระหว่าง burst series
-    • Stuck watchdog: 90 frame ไม่มีใคร hit → force burst
-    • autoFire (no unit): fire ทุก dpsInputDelay โดยไม่รอ signal
+    v13 Upgrades (สูงสุดแต่ยังแม่นยำ):
+    ─────────────────────────────────────────────────
+    • BURST_FRAMES: 2→4 frames (ป้องกัน packet drop เพิ่มขึ้น)
+    • BURST_COOLDOWN: 6ms→3ms (burst ถี่ขึ้น 2x)
+    • HIT_RATIO: 0.45→0.35 (trigger เร็วขึ้นจาก 35% ของ unit)
+    • STUCK_THRESH: 90→60 frames (detect stuck เร็วขึ้น ~1s)
+    • DPS_REQ_RATE_HB: 8ms→5ms (req แม่นยำขึ้น)
+    • Parallel burst: ยิง DPS_EQ + ATK + CLK พร้อมกันใน burst frame
+    • Smart cooldown: ถ้า burst pending อยู่ ไม่ต้อง check stuck
+    • AA keepalive interval: 500ms→300ms (ป้องกัน AA off บ่อยขึ้น)
+    • SNAP_SQ: 4→9 (snap ไว้ 3 stud แทน 2 stud เพื่อ req แม่นขึ้น)
+    • No-unit fallback: fire ทุก dpsInputDelay ไม่มีขั้นต่ำ
+    • Pre-burst seeding: ยิง 5 ครั้งตอน enable (เพิ่มจาก 3)
 ]]
 Tabs.Pre:Section({Title="DPS Boost"})
 
@@ -1491,11 +1492,11 @@ local DS2 = {
     hb=nil, aaConn=nil, aaHB=nil, lastAA=0,
     conns={}, desc={}, folder={},
     debs={}, unitCount=0,
-    -- [v12] burst system
-    hitCounter    = 0,       -- units hit this cycle
-    burstPending  = 0,       -- frames left to burst-fire
-    lastBurst     = 0,       -- os.clock() of last burst start
-    lastNoFire    = 0,       -- os.clock() timer for no-unit fallback
+    -- [v13] burst system
+    hitCounter    = 0,
+    burstPending  = 0,
+    lastBurst     = 0,
+    lastNoFire    = 0,
     -- mob snap
     scanFn=nil, mob=nil, part=nil,
     scanTick=0, chkTick=0,
@@ -1531,7 +1532,7 @@ local function startAAKeepalive()
     DS2.aaHB = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
         local now = os.clock()
-        if now - DS2.lastAA < 0.5 then return end
+        if now - DS2.lastAA < 0.3 then return end  -- ลดจาก 0.5 → 0.3 (AA เสถียรขึ้น)
         if not isAAOn() then doAAOn() else DS2.lastAA = now end
     end)
 end
@@ -1541,11 +1542,15 @@ local function stopAAKeepalive()
     doAAOff()
 end
 
--- ── [v12] triggerBurst: เริ่ม burst-fire sequence ───────────────────────
--- ยิง DPS_EQ 3 frame ติดกัน → ให้ server รับอย่างน้อย 1 ใน 3
-local BURST_FRAMES   = 3     -- จำนวน frame ที่ยิงต่อเนื่อง
-local BURST_COOLDOWN = 0.006 -- 6ms minimum ระหว่าง burst
+-- ── [v13] Constants ───────────────────────────────────────────────────────
+local BURST_FRAMES   = 4        -- เพิ่มจาก 3→4 (กันหล่นมากขึ้น)
+local BURST_COOLDOWN = 0.003    -- ลดจาก 6ms→3ms (burst ถี่ขึ้น 2x)
+local HIT_RATIO      = 0.35     -- ลดจาก 0.45→0.35 (trigger เร็วขึ้น)
+local STUCK_THRESH   = 60       -- ลดจาก 90→60 frames (~1s detect)
+local DPS_REQ_RATE_HB= 0.005    -- ลดจาก 8ms→5ms
+local SNAP_SQ        = 9        -- เพิ่มจาก 4→9 (snap range 3 stud)
 
+-- ── [v13] triggerBurst ────────────────────────────────────────────────────
 local function triggerBurst()
     if not dpsActive then return end
     local now = os.clock()
@@ -1558,28 +1563,22 @@ local function triggerBurst()
         end
     end
     if now < safeBoostUntil then return end
-    DS2.lastBurst   = now
+    DS2.lastBurst    = now
     DS2.burstPending = BURST_FRAMES
-    DS2.hitCounter  = 0  -- reset cycle
+    DS2.hitCounter   = 0
 end
 
--- ── [v12] Threshold: trigger burst เมื่อ hit เกิน N% ────────────────────
-local HIT_RATIO = 0.45  -- 45% ของ unit hit → burst ทันที
-
+-- ── [v13] checkHitThreshold ───────────────────────────────────────────────
 local function checkHitThreshold()
     if DS2.unitCount == 0 then return false end
     return DS2.hitCounter >= math.max(1, math.ceil(DS2.unitCount * HIT_RATIO))
 end
 
-local DPS_REQ_RATE_HB = 0.008  -- [v12] 8ms req rate (เร็วสุด)
-local SNAP_SQ         = 4
-
--- ── [v12] Master Heartbeat ───────────────────────────────────────────────
+-- ── [v13] Master Heartbeat ── สูงสุด, parallel fire ─────────────────────
 local function startMasterHB()
     if DS2.hb then DS2.hb:Disconnect() end
 
-    local _stuckFrames  = 0
-    local STUCK_THRESH  = 90   -- ~1.5s @ 60fps (เร็วกว่า v11)
+    local _stuckFrames = 0
 
     DS2.hb = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
@@ -1593,12 +1592,16 @@ local function startMasterHB()
             _lastClk = now; R.Byte:FireServer(unpack(clickArgs))
         end
 
-        -- ── [v12] BURST FIRE: fire ทุก frame ตาม burstPending ─────────────
+        -- ── [v13] BURST FIRE: fire DPS_EQ ทุก frame + parallel ATK ───────
         if DS2.burstPending > 0 then
             R.Byte:FireServer(DPS_EQ)
+            -- parallel: ยิง ATK พร้อมกันในระหว่าง burst เพื่อ throughput สูงสุด
+            R.Byte:FireServer(unpack(attackArgs))
+            _lastAtk = now  -- reset cooldown ให้ไม่ double-fire ใน branch บน
             DS2.burstPending = DS2.burstPending - 1
+            _stuckFrames = 0  -- reset stuck เมื่อ burst active
         else
-            -- ── [v12] No-unit fallback: ไม่มี unit → fire ตาม timer ──────
+            -- ── [v13] No-unit fallback ────────────────────────────────────
             if DS2.unitCount == 0 then
                 if now - DS2.lastNoFire >= dpsInputDelay then
                     DS2.lastNoFire = now
@@ -1606,13 +1609,13 @@ local function startMasterHB()
                 end
             end
 
-            -- ── [v12] Stuck watchdog ──────────────────────────────────────
+            -- ── [v13] Stuck watchdog ──────────────────────────────────────
             if DS2.unitCount > 0 then
                 if DS2.hitCounter == 0 then
                     _stuckFrames = _stuckFrames + 1
                     if _stuckFrames >= STUCK_THRESH then
                         _stuckFrames = 0
-                        triggerBurst()  -- force re-equip
+                        triggerBurst()
                     end
                 else
                     _stuckFrames = 0
@@ -1630,7 +1633,7 @@ local function startMasterHB()
             end
         end
         DS2.scanTick = DS2.scanTick + 1
-        if not DS2.mob and DS2.scanTick % 2 == 0 then  -- scan ทุก 2 frame (เร็วกว่า 3)
+        if not DS2.mob and DS2.scanTick % 2 == 0 then
             DS2.mob, DS2.part = DS2.scanFn()
         end
         if not DS2.mob or not DS2.part then return end
@@ -1638,6 +1641,7 @@ local function startMasterHB()
         local hrp = getHRP(); if not hrp then return end
         local mPos = DS2.part.Position
         local dv = hrp.Position - mPos
+        -- [v13] snap 3 stud แทน 2 stud (ลด false-negative)
         if dv.X*dv.X + dv.Z*dv.Z > SNAP_SQ then
             hrp.CFrame = CFrame.new(mPos)
         end
@@ -1653,7 +1657,7 @@ local function startMasterHB()
     end)
 end
 
--- ── [v12] findDebounce ────────────────────────────────────────────────────
+-- ── [v13] findDebounce ────────────────────────────────────────────────────
 local function findDebounce(unitInst)
     local d = unitInst:FindFirstChild("Debounce")
     if d and d:IsA("BoolValue") then return d end
@@ -1667,7 +1671,7 @@ local function findDebounce(unitInst)
     return nil
 end
 
--- ── [v12] wireUnit: per-unit signal → immediate burst trigger ────────────
+-- ── [v13] wireUnit: per-unit signal → immediate burst ────────────────────
 local function wireUnit(unitInst)
     local uName = unitInst.Name
     if DS2.debs[uName] then return end
@@ -1693,11 +1697,10 @@ local function wireUnit(unitInst)
     DS2.conns[uName] = deb:GetPropertyChangedSignal("Value"):Connect(function()
         if not dpsActive then return end
         local cur = deb.Value
-        -- false→true: unit เพิ่งตี → เพิ่ม counter → ตรวจ threshold
         if cur and not prev then
             DS2.hitCounter = DS2.hitCounter + 1
             if checkHitThreshold() then
-                triggerBurst()  -- fire burst ทันที ไม่รอ HB
+                triggerBurst()
             end
         end
         prev = cur
@@ -1744,8 +1747,8 @@ Tabs.Pre:Toggle({
         DS2.debs={}; DS2.unitCount=0
         safeBoostUntil = 0
 
-        -- Initial burst to kick-start units
-        for _ = 1, BURST_FRAMES do
+        -- [v13] Pre-burst seeding: 5 frames (เพิ่มจาก 3)
+        for _ = 1, 5 do
             pcall(function() R.Byte:FireServer(DPS_EQ) end)
         end
         startAAKeepalive()
@@ -1774,8 +1777,10 @@ Tabs.Pre:Toggle({
             end
             if not dpsActive then return end
 
-            -- Re-burst after all units wired
-            task.wait(0.03)
+            -- [v13] Re-burst หลัง wire: 2 bursts ติดกัน
+            task.wait(0.02)
+            if dpsActive then triggerBurst() end
+            task.wait(0.01)
             if dpsActive then triggerBurst() end
 
             local connAdded = plrFolder.ChildAdded:Connect(function(u)
@@ -1816,9 +1821,20 @@ Tabs.Pre:Toggle({
     end
 })
 
--- ████████████████████████████████████████████████████████
--- AUTO RIFT — Updated Logic (0-10s Window, Smart 10-stud, 10s Cooldown Lobby)
--- ████████████████████████████████████████████████████████
+-- ████████████████████████████████████████████████████████████████████
+-- AUTO RIFT v3 — Model-First Detection, Precise Clear, 10s Cooldown
+-- ████████████████████████████████████████████████████████████████████
+--[[
+    v3 Design:
+    ──────────────────────────────────────────────────────────────
+    • ตรวจจาก SpawnedRifts/RiftModel เป็นหลัก (ไม่รอ TimeLeft)
+    • เจอ Model → วาปไป Reaper Society → FireProximityPrompt ทุก frame
+      จนกว่า Model จะหายไปจาก Workspace
+    • หลัง Model หาย → รอมอน Rifts Spawn → ตีจนหมด (เช็คซ้ำ 0.6s)
+    • ยืนยันว่าเคลียร์แน่นอน (noMobTick >= 6 = 0.6s ติดกัน)
+    • รอ 10 วินาที → วาปกลับ Lobby → ทำงานอื่นต่อ
+    • ถ้า Model ไม่เจอใน SpawnedRifts → ก็ fallback รอ TimeLeft = 0
+]]
 Tabs.Gen:Section({Title="Auto Rift"})
 
 -- ── SpawnedRifts helpers ─────────────────────────────────────────────────
@@ -1828,26 +1844,39 @@ local function getSpawnedRifts()
     return SpawnedRiftsFolder
 end
 
-local function waitForRiftModel(timeout, cancelFn)
+-- ── ตรวจ RiftModel จาก SpawnedRifts (Model-First) ───────────────────────
+local function findRiftModelNow()
     local sr = getSpawnedRifts()
-    if sr then
-        local ex = sr:FindFirstChild("RiftModel")
-        if ex and ex.Parent then return ex end
-    end
-    local found  = nil
-    local conns  = {}
+    if not sr then return nil end
+    local m = sr:FindFirstChild("RiftModel")
+    return (m and m.Parent) and m or nil
+end
+
+-- รอ RiftModel ปรากฏ (อาจมาจาก SpawnedRifts หรือ fallback TimeLeft)
+local function waitForRiftModel(timeout, cancelFn)
+    -- ตรวจทันทีก่อน
+    local ex = findRiftModelNow()
+    if ex then return ex end
+
+    local found   = nil
+    local conns   = {}
+
     local function hookSR(srFolder)
         if not srFolder then return end
         table.insert(conns, srFolder.ChildAdded:Connect(function(child)
             if not found and child.Name == "RiftModel" then found = child end
         end))
+        -- เช็คอีกครั้งหลัง hook กันพลาด
         local ex2 = srFolder:FindFirstChild("RiftModel")
         if ex2 and ex2.Parent then found = ex2 end
     end
+
     pcall(function()
+        local sr = getSpawnedRifts()
         if sr then
             hookSR(sr)
         else
+            -- SpawnedRifts ยังไม่มี → รอ Workspace
             local wc
             wc = Workspace.ChildAdded:Connect(function(child)
                 if child.Name == "SpawnedRifts" then
@@ -1859,9 +1888,11 @@ local function waitForRiftModel(timeout, cancelFn)
             table.insert(conns, wc)
         end
     end)
-    local dl = os.clock() + (timeout or 30)
+
+    local dl = os.clock() + (timeout or 60)
     while not found and os.clock() < dl do
         if cancelFn and cancelFn() then break end
+        -- Poll ทุก 40ms เพื่อกันหลุด
         local srNow = getSpawnedRifts()
         if srNow then
             local poll = srNow:FindFirstChild("RiftModel")
@@ -1869,6 +1900,7 @@ local function waitForRiftModel(timeout, cancelFn)
         end
         task.wait(0.04)
     end
+
     for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
     return found
 end
@@ -1900,6 +1932,7 @@ local function findRiftProxPrompt(model)
     return nil
 end
 
+-- รอ RiftModel หายไปจาก Workspace
 local function waitRiftModelGone(model, timeout, cancelFn)
     if not model or not model.Parent then return true end
     local gone = false
@@ -1916,7 +1949,7 @@ local function waitRiftModelGone(model, timeout, cancelFn)
         task.wait(0.04)
     end
     if conn then pcall(function() conn:Disconnect() end) end
-    return gone
+    return gone or not model.Parent
 end
 
 -- ── Rift mob helpers ─────────────────────────────────────────────────────
@@ -1975,14 +2008,25 @@ end
 
 local REAPER_STAGE  = "Reaper Society"
 local REAPER_BUF    = teleportBuffers["Reaper Society"]
-local SNAP_DIST_SQ  = 100  -- 10 stud^2
+local RIFT_SNAP_SQ  = 100  -- 10 stud^2
 
+-- วาปไป Reaper แบบ persistent (ลองซ้ำจนถึง deadline)
 local function tpToReaper(cancelFn)
-    if getStg() == REAPER_STAGE then return true end
-    local dl = os.clock() + 12
+    if getStg() == REAPER_STAGE then
+        local char = lp.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health > 0 and hrp.Position.Y > -50 then return true end
+    end
+    local dl = os.clock() + 15
     local lastSend = -99
     while os.clock() < dl do
         if cancelFn and cancelFn() then return false end
+        local now = os.clock()
+        if now - lastSend >= 0.5 then
+            R.Byte:FireServer(REAPER_BUF); lastStgUp = 0; lastSend = now
+        end
+        task.wait(0.05)
         if getStg() == REAPER_STAGE then
             local char = lp.Character
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
@@ -1991,11 +2035,6 @@ local function tpToReaper(cancelFn)
                 return true
             end
         end
-        local now = os.clock()
-        if now - lastSend >= 0.6 then
-            R.Byte:FireServer(REAPER_BUF); lastStgUp = 0; lastSend = now
-        end
-        task.wait(0.05)
     end
     return getStg() == REAPER_STAGE
 end
@@ -2027,101 +2066,150 @@ Tabs.Gen:Toggle({
                 end
             end
 
+            -- ── ลงทะเบียน RiftModel watcher ทันที ─────────────────────────
+            local riftModelSignal = nil   -- RiftModel ที่เพิ่งตรวจพบ
+            local riftModelConn   = nil
+            local riftModelWsConn = nil
+
+            local function startModelWatch()
+                -- ตรวจจาก SpawnedRifts โดยตรง
+                local function hookSR(srFolder)
+                    if not srFolder then return end
+                    riftModelConn = srFolder.ChildAdded:Connect(function(child)
+                        if child.Name == "RiftModel" then
+                            riftModelSignal = child
+                        end
+                    end)
+                    -- เช็คทันทีเผื่อมีอยู่แล้ว
+                    local ex = srFolder:FindFirstChild("RiftModel")
+                    if ex and ex.Parent then riftModelSignal = ex end
+                end
+
+                local sr = getSpawnedRifts()
+                if sr then
+                    hookSR(sr)
+                else
+                    riftModelWsConn = Workspace.ChildAdded:Connect(function(child)
+                        if child.Name == "SpawnedRifts" then
+                            SpawnedRiftsFolder = child
+                            if riftModelWsConn then
+                                pcall(function() riftModelWsConn:Disconnect() end)
+                                riftModelWsConn = nil
+                            end
+                            hookSR(child)
+                        end
+                    end)
+                end
+            end
+
+            local function stopModelWatch()
+                if riftModelConn   then pcall(function() riftModelConn:Disconnect()   end); riftModelConn=nil   end
+                if riftModelWsConn then pcall(function() riftModelWsConn:Disconnect() end); riftModelWsConn=nil end
+                riftModelSignal = nil
+            end
+
+            startModelWatch()
+
+            -- ══════════════════════════════════════════════════════════════
+            -- MAIN LOOP: ตรวจ RiftModel → act
+            -- ══════════════════════════════════════════════════════════════
             while autoRiftRun do
                 if cancelFn() then break end
 
-                -- รอจนกว่า TimeLeft จะอยู่ในช่วง 0 - 10 วินาที
-                local tlNow = getRiftTimeLeft()
-                local inWindow = (tlNow >= 0 and tlNow <= 10)
+                -- ── รอ RiftModel (Model-First) ──────────────────────────
+                -- ถ้า signal จาก watcher มีแล้ว ก็ใช้เลย
+                -- ถ้าไม่มีให้ poll ทุก 0.1s (เบา, ไม่กิน CPU)
+                local riftModel = riftModelSignal
+                if not riftModel or not riftModel.Parent then
+                    -- ลอง poll จาก SpawnedRifts โดยตรง
+                    riftModel = findRiftModelNow()
+                end
 
-                if not inWindow then
-                    task.wait(0.2)
+                if not riftModel or not riftModel.Parent then
+                    task.wait(0.1)
                     continue
                 end
 
-                -- ═══════════════════════════════════════════════════
-                -- เจอเวลา 0-10 วิ บังคับหยุดทุกอย่างเพื่อมารอ Rift ทันที
-                -- ═══════════════════════════════════════════════════
+                -- ══════════════════════════════════════════════════════════
+                -- พบ RiftModel → เริ่ม sequence ทันที
+                -- ══════════════════════════════════════════════════════════
+                riftModelSignal = nil  -- reset signal
+
                 getgenv().doRift  = true
                 summonPaused      = true
                 summonPauseReason = "rift"
 
-                -- ตัดจบ Raid ทันทีเผื่อติดอยู่
+                -- หยุด Raid ถ้ากำลังทำอยู่
                 if getgenv().raidInP and getRaidSession() then
                     pcall(function() R.RaidsL:FireServer("Leave") end)
-                    task.wait(0.2); getgenv().raidInP = false
+                    task.wait(0.15); getgenv().raidInP = false
                 end
 
-                -- วาร์ปมารอที่ Reaper Society ทันที
+                -- ── วาปไป Reaper Society ──────────────────────────────────
                 tpToReaper(cancelFn)
-                if cancelFn() then break end
+                if cancelFn() then doCleanup(); continue end
 
-                -- รอจนกว่าจะเปิดให้เข้า (TimeLeft == 0) เผื่อวาปมาตอน 1-10 วิ
-                local zeroWaitDl = os.clock() + 15
-                while autoRiftRun and os.clock() < zeroWaitDl do
-                    if cancelFn() then break end
-                    if getRiftTimeLeft() == 0 then break end
-                    task.wait(0.05)
-                end
-                if cancelFn() then break end
-
-                -- ═══════════════════════════════════════════════════
-                -- รอโมเดล Rift เกิดและทำการกด Prompt
-                -- ═══════════════════════════════════════════════════
-                local riftModel = waitForRiftModel(30, cancelFn)
-                if not riftModel or cancelFn() then
-                    doCleanup(); task.wait(1.0); continue
-                end
-
-                local promptActive  = true
-                local promptConn    = nil
+                -- ── Snap ตัวเองไปหา RiftModel + FireProximityPrompt ────────
+                local promptActive = true
+                local promptConn   = nil
 
                 promptConn = RunService.Heartbeat:Connect(function()
-                    if not promptActive or not riftModel or not riftModel.Parent then return end
-                    local rPartRef = getRiftModelPart(riftModel)
-                    local prompt   = findRiftProxPrompt(riftModel)
+                    if not promptActive then return end
+                    if not riftModel or not riftModel.Parent then
+                        promptActive = false; return
+                    end
 
-                    local hrp = getHRP()
-                    if hrp and rPartRef and rPartRef.Parent then
-                        local mPos = rPartRef.Position
+                    local rPart  = getRiftModelPart(riftModel)
+                    local prompt = findRiftProxPrompt(riftModel)
+                    local hrp    = getHRP()
+
+                    -- Snap ไปหา Model ถ้าห่างเกิน 10 stud
+                    if hrp and rPart and rPart.Parent then
+                        local mPos = rPart.Position
                         local dv   = hrp.Position - mPos
-                        local dsq  = dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z
-                        -- เช็คระยะห่าง 10 Stud ถ้าระยะเกินให้วาร์ปกลับไปหา
-                        if dsq > SNAP_DIST_SQ then
+                        if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > RIFT_SNAP_SQ then
                             killVelocity(hrp)
                             hrp.CFrame = CFrame.new(mPos)
                         end
                     end
 
-                    -- Fire ProximityPrompt จนกว่าโมเดลจะหายไป
+                    -- FireProximityPrompt ทุก frame จนกว่า Model จะหาย
                     if prompt and prompt.Parent then
                         pcall(function() fireproximityprompt(prompt) end)
                     end
                 end)
 
-                -- รอจนกว่า RiftModel จะหายไปจริงๆ
+                -- ── รอ RiftModel หายไปแน่นอน ─────────────────────────────
                 waitRiftModelGone(riftModel, 120, cancelFn)
 
                 promptActive = false
                 if promptConn then pcall(function() promptConn:Disconnect() end); promptConn = nil end
+
                 if cancelFn() then doCleanup(); continue end
 
                 flushAllCaches()
-                task.wait(0.2)
+                task.wait(0.15)
 
-                -- ═══════════════════════════════════════════════════
-                -- รอมอนสเตอร์ Rifts Spawn และเริ่มฟาร์ม
-                -- ═══════════════════════════════════════════════════
-                local mobWaitDl = os.clock() + 15
+                -- ══════════════════════════════════════════════════════════
+                -- รอมอน Rifts spawn แล้วเริ่มฆ่า
+                -- ══════════════════════════════════════════════════════════
+                local mobWaitDl = os.clock() + 20
                 while os.clock() < mobWaitDl and autoRiftRun do
+                    if cancelFn() then break end
                     if riftHasLiveMobs() then break end
-                    task.wait(0.05)
+                    task.wait(0.04)
                 end
 
-                if not riftHasLiveMobs() or cancelFn() then
-                    doCleanup(); task.wait(1.0); continue
+                if cancelFn() then doCleanup(); continue end
+
+                if not riftHasLiveMobs() then
+                    -- ไม่มีมอน → clean up แล้วรอรอบใหม่
+                    doCleanup()
+                    startModelWatch()  -- restart watcher
+                    task.wait(1.0); continue
                 end
 
+                -- Snap ไปหามอนตัวแรก
                 local initMob, initPart = findNearestRiftMob()
                 if initPart then
                     local hrpNow = getHRP()
@@ -2135,6 +2223,7 @@ Tabs.Gen:Toggle({
                 sendAtk(); sendClk()
                 if initMob then pcall(function() R.Req:FireServer(initMob.Name, "Mouse") end) end
 
+                -- ── Combat Heartbeat ──────────────────────────────────────
                 local cRiftMob, cRiftPart = initMob, initPart
                 local _reqLast, _scanTick, _reEqLast, _stuckCnt = 0, 0, 0, 0
 
@@ -2144,6 +2233,7 @@ Tabs.Gen:Toggle({
                     local now = os.clock()
                     sendAtk(); sendClk()
 
+                    -- ตรวจ / ล้าง current target
                     if cRiftMob then
                         if not cRiftMob.Parent or not isRiftMobValid(cRiftMob) then
                             cRiftMob = nil; cRiftPart = nil
@@ -2153,6 +2243,7 @@ Tabs.Gen:Toggle({
                         end
                     end
 
+                    -- หา target ใหม่ถ้าไม่มี
                     _scanTick = _scanTick + 1
                     if not cRiftMob and _scanTick % 2 == 0 then
                         cRiftMob, cRiftPart = findNearestRiftMob()
@@ -2174,6 +2265,7 @@ Tabs.Gen:Toggle({
                         if not cRiftPart then cRiftMob = nil; return end
                     end
 
+                    -- Snap ไปหามอน
                     local hrp = getHRP(); if not hrp then return end
                     local dv = hrp.Position - cRiftPart.Position
                     if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 16 then
@@ -2181,45 +2273,55 @@ Tabs.Gen:Toggle({
                         hrp.CFrame = CFrame.new(cRiftPart.Position)
                     end
 
+                    -- Request attack
                     if now - _reqLast >= 0.03 then
                         _reqLast = now
                         R.Req:FireServer(cRiftMob.Name, "Mouse")
                         pendingRequests[cRiftMob] = now
                     end
 
+                    -- DPS re-equip ถ้าเปิดอยู่
                     if dpsActive and now - _reEqLast >= 2.0 then
                         _reEqLast = now
                         pcall(function() R.Byte:FireServer(buffer.fromstring("\026\000")) end)
                     end
                 end)
 
-                -- ═══════════════════════════════════════════════════
-                -- ยืนยันว่าเคลียร์มอนหมดเกลี้ยงจริงๆ (เช็คซ้ำจนกว่าจะไม่เจอ)
-                -- ═══════════════════════════════════════════════════
+                -- ══════════════════════════════════════════════════════════
+                -- ยืนยันเคลียร์มอนหมดแน่นอน (ต้องไม่เจอมอน 0.6s ติดกัน)
+                -- ══════════════════════════════════════════════════════════
                 local combatDl  = os.clock() + 300
                 local noMobTick = 0
+
                 while autoRiftRun and os.clock() < combatDl do
+                    if cancelFn() then break end
                     task.wait(0.1)
                     if not riftHasLiveMobs() then
                         noMobTick = noMobTick + 1
-                        if noMobTick >= 6 then break end -- ยืนยันว่าไม่มีมอนแล้วอย่างน้อย 0.6 วิ
+                        if noMobTick >= 6 then  -- 6 × 0.1s = 0.6s ยืนยัน
+                            break
+                        end
                     else
                         noMobTick = 0
                     end
                 end
 
+                -- หยุด combat
                 if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
                 cRiftMob = nil; cRiftPart = nil
-                
-                -- ═══════════════════════════════════════════════════
-                -- จบการต่อสู้ รอ 10 วินาที แล้ววาร์ปกลับ Lobby เพื่อทำอย่างอื่นต่อ
-                -- ═══════════════════════════════════════════════════
-                local chillWaitDl = os.clock() + 10
-                while os.clock() < chillWaitDl and autoRiftRun do
+
+                if cancelFn() then doCleanup(); startModelWatch(); continue end
+
+                -- ══════════════════════════════════════════════════════════
+                -- รอ 10 วินาที → วาปกลับ Lobby
+                -- ══════════════════════════════════════════════════════════
+                local chillDl = os.clock() + 10
+                while os.clock() < chillDl and autoRiftRun do
+                    if cancelFn() then break end
                     task.wait(0.2)
                 end
 
-                if autoRiftRun then
+                if autoRiftRun and not cancelFn() then
                     local lobbyBuf = teleportBuffers["Lobby"]
                     if lobbyBuf then
                         R.Byte:FireServer(lobbyBuf)
@@ -2227,11 +2329,17 @@ Tabs.Gen:Toggle({
                     end
                 end
 
-                -- รีเซ็ตค่าให้ระบบอื่นๆ (เช่น Raid/Farm) สลับกลับมาทำงานได้
+                -- Cleanup และรับ loop ใหม่
                 doCleanup()
-                task.wait(0.5)
+
+                -- restart watcher สำหรับรอบหน้า
+                stopModelWatch()
+                task.wait(0.3)
+                if autoRiftRun then startModelWatch() end
             end
 
+            -- Final cleanup
+            stopModelWatch()
             if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
             getgenv().doRift = false
             if summonPaused and summonPauseReason == "rift" then
@@ -2391,7 +2499,6 @@ Tabs.Gen:Toggle({
         task.spawn(function()
             local function cancelBoss() return not getgenv().autoBoss end
 
-            -- [v11] pause loop: รอ rift ให้เสร็จก่อน ถ้า doRift=true
             local function waitRiftDone()
                 while getgenv().autoBoss and getgenv().doRift do
                     task.wait(0.15)
@@ -2424,7 +2531,6 @@ Tabs.Gen:Toggle({
 
                 getgenv().bossWaiting = true
 
-                -- [v11] รอ Rift ให้เสร็จก่อน ถ้ากำลังทำ Rift อยู่
                 if getgenv().doRift then
                     if waitRiftDone() then continue end
                 end
@@ -2434,7 +2540,6 @@ Tabs.Gen:Toggle({
                     while getgenv().raidInP and getRaidSession()~=nil and os.clock()<rDl do
                         if cancelBoss() or getgenv().doRift then break end; task.wait(0.5)
                     end
-                    -- รอ rift อีกครั้งถ้าเกิดขึ้นระหว่างรอ raid
                     if getgenv().doRift then
                         if waitRiftDone() then continue end
                     end
@@ -2837,15 +2942,14 @@ Tabs.Gen:Toggle({
                     end
                 end
                 if raidYieldCheck() then return false end
-                -- [v12] ลด interval และ deadline ให้เร็วขึ้น
                 local deadline=os.clock()+12; local lastSend=-99
-                local interval=0.5  -- เริ่มที่ 0.5s (เดิม 1.2s)
+                local interval=0.5
                 while os.clock()<deadline do
                     if raidYieldCheck() then return false end
                     local now=os.clock()
                     if now-lastSend>=interval then
                         R.Byte:FireServer(teleportBuffers[target]); lastSend=now
-                        interval=math.min(interval*1.5, 2.5)  -- cap ที่ 2.5s
+                        interval=math.min(interval*1.5, 2.5)
                     end
                     task.wait(0.06); lastStgUp=0
                     if getStg()==target then
@@ -2958,7 +3062,7 @@ Tabs.Gen:Toggle({
                     end
                     local ct=pad:FindFirstChild("Centers") or pad:FindFirstChildWhichIsA("BasePart")
                     if ct then tpDirect(ct,true,false) else tpTarget(pad) end
-                    task.wait(0.04)  -- [v12] 0.10→0.04 minimal confirm wait
+                    task.wait(0.04)
                     if not getgenv().autoRaid or raidYieldCheck() then continue end
                     cAtt=0; sessionJustCreated=false; setRaidSt("CREATE")
                 elseif st=="CREATE" then
@@ -2966,7 +3070,7 @@ Tabs.Gen:Toggle({
                        and (os.clock()-(getgenv().lastBossKill or 0)>=25) then
                         setRaidSt("FIND_PAD"); continue
                     end
-                    if stateAge()>12 then  -- [v12] 15→12s timeout
+                    if stateAge()>12 then
                         cAtt=0
                         if not getgenv().isDD and #pads>0 then pIdx=(pIdx%#pads)+1 end
                         setRaidSt("FIND_PAD"); continue
@@ -2978,7 +3082,6 @@ Tabs.Gen:Toggle({
                     if cAtt==0 then
                         lastStgUp=0; if getStg()~=sg() then setRaidSt("TELEPORT"); continue end
                     end
-                    -- [v12] fire create request ทันที ไม่รอ cooldown นาน
                     if os.clock()-lastCreateTime>=0.08 then
                         lastCreateTime=os.clock()
                         R.Raids:FireServer(
@@ -2986,7 +3089,6 @@ Tabs.Gen:Toggle({
                             getgenv().selRaidDiff)
                         cAtt=cAtt+1
                     end
-                    -- [v12] รอ session สั้นลง 2.0→0.8s ต่อ attempt
                     local cDl=os.clock()+0.8
                     while os.clock()<cDl do
                         if raidYieldCheck() then break end
@@ -2996,11 +3098,11 @@ Tabs.Gen:Toggle({
                         task.wait(0.015)
                     end
                     if st~="WAIT_ENTER" then
-                        if cAtt>=6 then  -- [v12] 5→6 attempts ก่อนเปลี่ยน pad
+                        if cAtt>=6 then
                             cAtt=0
                             if not getgenv().isDD and #pads>0 then pIdx=(pIdx%#pads)+1 end
                             setRaidSt("FIND_PAD")
-                        else task.wait(0.02) end  -- [v12] 0.08→0.02
+                        else task.wait(0.02) end
                     end
                 elseif st=="WAIT_ENTER" then
                     if stateAge()>30 then
