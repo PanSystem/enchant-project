@@ -1896,10 +1896,11 @@ local function riftContainerExists()
     return false
 end
 
+-- riftExists: ใช้ physical evidence เท่านั้น
+-- textLatch ใช้แค่เพิ่มความถี่ในการ scan ไม่ใช้เป็น trigger หลัก
 local function riftExists()
     if riftHasLiveMobs()     then return true end
     if riftContainerExists() then return true end
-    if riftTextLatch         then return true end
     if checkRiftPhysical()   then return true end
     return false
 end
@@ -2143,7 +2144,15 @@ Tabs.Gen:Toggle({
             while autoRiftRun do
                 if not getgenv().autoRift then break end
 
+                -- [FIX] ใช้ physical evidence เท่านั้น ไม่รวม textLatch
+                -- textLatch แค่ทำให้ scan ถี่ขึ้น แต่ไม่ trigger TP
                 local hasRift = riftExists()
+
+                -- textLatch เป็นสัญญาณล่วงหน้า ให้ scan physical ถี่ขึ้น
+                if not hasRift and riftTextLatch then
+                    -- รอ physical evidence จาก text hint สั้นๆ
+                    task.wait(0.10); continue
+                end
 
                 if not hasRift then
                     if riftEngaged or getgenv().doRift then endRift() end
@@ -2151,23 +2160,28 @@ Tabs.Gen:Toggle({
                     continue
                 end
 
-                task.wait(0.12)
-                if not riftExists() then task.wait(0.15); continue end
+                -- Double-confirm physical rift
+                task.wait(0.15)
+                if not riftExists() then task.wait(0.20); continue end
+                task.wait(0.10)
+                if not riftExists() then task.wait(0.20); continue end
 
                 if not getgenv().doRift then
                     getgenv().doRift    = true
                     summonPaused        = true
                     summonPauseReason   = "rift"
 
+                    -- [PRIORITY] Rift > Raid: ออกจาก Raid ทันที
                     if getgenv().raidInP then
-                        local rDl = os.clock() + 3.0
+                        local rDl = os.clock() + 5.0
                         while getgenv().raidInP and os.clock() < rDl do task.wait(0.06) end
                         if getRaidSession() then
                             pcall(function() R.RaidsL:FireServer("Leave") end)
-                            task.wait(0.25); getgenv().raidInP = false
+                            task.wait(0.3); getgenv().raidInP = false
                         end
                     end
-                    if getgenv().doBoss then task.wait(0.5) end
+                    -- [PRIORITY] Rift > Boss: ออกจาก Boss ทันที
+                    if getgenv().doBoss then task.wait(0.8) end
                 end
 
                 if getStg() ~= "Reaper Society" then
@@ -2176,11 +2190,40 @@ Tabs.Gen:Toggle({
                     end
                     local ok = tpToRiftStage(cancelRift)
                     if not ok then
-                        if not riftExists() then endRift() end
-                        task.wait(0.30); continue
+                        -- TP ล้มเหลว → reset แล้วรอ
+                        getgenv().doRift = false
+                        resetRiftDetection()
+                        riftEngaged = false
+                        if summonPaused and summonPauseReason == "rift" then
+                            summonPaused = false; summonPauseReason = nil
+                        end
+                        task.wait(1.0); continue
                     end
-                    task.wait(0.25)
+                    task.wait(0.35)
                     lastHRPUp = 0; lastPartUp = 0
+                end
+
+                -- [FIX] หลัง TP ถึง Reaper Society แล้ว ต้องตรวจยืนยันว่า Rift เกิดจริงๆ
+                -- รอ mob สูงสุด 8 วินาที ถ้าไม่เจอ = false alarm → กลับ Lobby
+                local riftVerifyDl = os.clock() + 8.0
+                local riftVerified = false
+                while os.clock() < riftVerifyDl and autoRiftRun do
+                    task.wait(0.3); lastTgtUp = 0
+                    if riftHasLiveMobs() then riftVerified = true; break end
+                    if riftContainerExists() then riftVerified = true; break end
+                end
+
+                if not riftVerified then
+                    -- Rift ยังไม่เกิดจริง หรือ false alarm → กลับ Lobby รอ
+                    if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
+                    cRiftMob = nil; cRiftPart = nil; riftEngaged = false
+                    getgenv().doRift = false
+                    resetRiftDetection()
+                    if summonPaused and summonPauseReason == "rift" then
+                        summonPaused = false; summonPauseReason = nil
+                    end
+                    tpToLobbyConfirmed()
+                    task.wait(1.5); continue
                 end
 
                 lastTgtUp = 0
@@ -2207,11 +2250,16 @@ Tabs.Gen:Toggle({
 
                     startRiftCombat()
 
+                    -- Combat loop
                     local combatDl = os.clock() + 300
                     while autoRiftRun and os.clock() < combatDl do
                         task.wait(0.06)
                         lastTgtUp = 0
-                        if not riftHasLiveMobs() then break end
+                        if not riftHasLiveMobs() then
+                            -- Confirm mob ตายจริง (2 รอบ)
+                            task.wait(0.3); lastTgtUp = 0
+                            if not riftHasLiveMobs() then break end
+                        end
 
                         if cRiftPart then
                             local hrp2 = getHRP()
@@ -2228,6 +2276,7 @@ Tabs.Gen:Toggle({
                     if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
                     cRiftMob = nil; cRiftPart = nil
 
+                    -- รอ wave ใหม่ 8s
                     local waveFound = false
                     local postDl    = os.clock() + 8
                     while os.clock() < postDl and autoRiftRun do
@@ -2437,6 +2486,9 @@ Tabs.Gen:Toggle({
 
             while getgenv().autoBoss do
 
+                -- [FIX] ล้าง conn เก่าทุกต้น loop ป้องกัน attack โดยไม่มี UI
+                clearBossConn()
+
                 local bossReady = isBossEventActive()
                                and (os.clock() - (getgenv().lastBossKill or 0) >= 25)
                 getgenv().bossWaiting = bossReady
@@ -2445,11 +2497,12 @@ Tabs.Gen:Toggle({
                     task.wait(0.8); continue
                 end
 
+                -- [PRIORITY] Abandon รอ Raid เสร็จก่อนเสมอ
                 if getgenv().raidInP then
-                    local rDl = os.clock() + 300
+                    local rDl = os.clock() + 600  -- รอได้ถึง 10 นาที
                     while getgenv().raidInP and os.clock() < rDl do
                         if cancelBoss() then break end
-                        task.wait(0.3)
+                        task.wait(0.5)
                     end
                 end
                 if cancelBoss() then continue end
@@ -2520,8 +2573,19 @@ Tabs.Gen:Toggle({
                     bossFail(); task.wait(1.0); continue
                 end
 
+                -- [FIX] รอให้ Boss Fight scene โหลดสมบูรณ์ก่อนเริ่ม combat
+                -- ป้องกัน "เข้า UI แล้วแต่ยังไม่ spawn mob" และ "วาปไว"
+                clearBossConn()
+                task.wait(2.5)
+                if cancelBoss() then bossFail(); continue end
+
+                -- ต้องยังอยู่ใน BossFight UI
+                if not detectBossFightUI() then
+                    bossFail(); task.wait(1.0); continue
+                end
+
                 local cBoss, cBossPart = nil, nil
-                local spawnDl = os.clock() + 12
+                local spawnDl = os.clock() + 15
                 while os.clock() < spawnDl do
                     if cancelBoss() then break end
                     cBoss, cBossPart = getBossMobInStage()
@@ -2534,7 +2598,7 @@ Tabs.Gen:Toggle({
                 end
 
                 if cBossPart then tpDirect(cBossPart, true, true) end
-                task.wait(0.2)
+                task.wait(0.4)
 
                 local fighting = true
                 clearBossConn()
@@ -2595,7 +2659,10 @@ Tabs.Gen:Toggle({
                     summonPaused = false; summonPauseReason = nil
                 end
 
+                -- [FIX] รอให้ reward drop ก่อนกลับ Lobby
+                -- ป้องกันวาปออกก่อนได้ของ
                 if getgenv().autoBoss and not getgenv().doRift then
+                    task.wait(4.5)
                     waitReady("Lobby", 10, teleportBuffers["Lobby"], 2, riftCancel)
                 end
             end
@@ -2857,14 +2924,11 @@ Tabs.Gen:Toggle({
                     if cTgt and cPart then
                         local hrp=getHRP()
                         if hrp then
-                            local mPos=cPart.Position; local diff=hrp.Position-mPos
-                            local dsq=diff.X*diff.X+diff.Y*diff.Y+diff.Z*diff.Z
-                            if dpsActive then
-                                hrp.CFrame=CFrame.new(mPos); reqAttack(cTgt)
-                            else
-                                if dsq>Const.ATK_D_SQ then tpInstant(CFrame.new(mPos+diff.Unit*(-3))) end
-                                reqAttack(cTgt)
-                            end
+                            local mPos=cPart.Position
+                            -- [FIX] TP ตรงไปที่มอนเลย เหมือน Auto Selected ไม่เช็คระยะ
+                            killVelocity(hrp)
+                            hrp.CFrame=CFrame.new(mPos)
+                            reqAttack(cTgt)
                         end
                     end
                 end)
