@@ -74,10 +74,11 @@ getgenv().selSumm      = "Namex Planet"
 getgenv().selTp        = "Lobby"
 getgenv().selSummMode  = "Normal"
 
-getgenv().doRift   = false
-getgenv().doBoss   = false
-getgenv().raidInP  = false
-getgenv().isDD     = false
+getgenv().doRift      = false
+getgenv().doBoss      = false
+getgenv().raidInP     = false
+getgenv().isDD        = false
+getgenv().riftSettling = false  -- Rift↔Raid handoff semaphore: true = rift กำลัง settle หลังจบ
 getgenv().colPurp  = false
 getgenv().bossWaiting = false
 
@@ -1433,49 +1434,50 @@ Tabs.Gen:Toggle({
 })
 
 -- ████████████████████████████████████████████████████████████████████
--- DPS BOOST ENGINE v13R
+-- DPS BOOST ENGINE v14 — Debounce-Scan (Clean & Efficient)
 -- ████████████████████████████████████████████████████████████████████
+--[[
+    หลักการทำงาน:
+    ─────────────────────────────────────────────────────────────────
+    • ทุก Heartbeat: GetChildren() ของ unit folder (Method Cache ระดับ micro)
+    • วนเช็ค Debounce ของทุก unit → ถ้า ALL = true → Fire DPS_EQ x2 ทันที
+    • ไม่มี unit → fallback fire DPS_EQ x2 ที่ dpsInputDelay
+    • AA keepalive: ป้องกัน Auto_Attacks ดับ (0.4s interval)
+    • ATK/CLK keepalive: ส่ง attack และ click packet แยก lane
+    • Mob snap + req: เมื่อ scanFn ใช้งานอยู่ (linked กับ AutoNearest/AutoSelected)
+    • Safe DMG: หยุด DPS_EQ 5s เมื่อค่า DPS เกิน limit
+    ─────────────────────────────────────────────────────────────────
+]]
 Tabs.Pre:Section({Title="DPS Boost"})
 
 local dpsCleanup
 do
 
-local DPS_EQ        = buffer.fromstring("\026\000")
-local dpsInputDelay = 0.02
-local safeDMGLimit  = 2000000
+local DPS_EQ         = buffer.fromstring("\026\000")
+local dpsInputDelay  = 0.02
+local safeDMGLimit   = 2000000
 local safeBoostUntil = 0
 getgenv().safeBoostActive = false
 
-Tabs.Pre:Input({
-    Title="Dmg Delay", Desc="default 0.02",
-    Value="0.02", Placeholder="0.005 – 2.0",
-    Callback=function(v)
-        local n = tonumber(v)
-        if n then dpsInputDelay = math.clamp(n, 0.005, 5.0) end
-    end
-})
-Tabs.Pre:Input({
-    Title="Safe DMG Limit", Desc="",
-    Value="2500000", Placeholder="Dmg Limit",
-    Callback=function(v)
-        local n = tonumber(v)
-        if n then safeDMGLimit = math.max(n, 1000) end
-    end
-})
+-- [🔥 Micro-Optimization: Method Caching]
+-- ดึงฟังก์ชัน GetChildren / FindFirstChild ออกมาเก็บไว้
+-- Direct Call ข้ามขั้นตอน metatable → ลด CPU overhead ระดับ micro-second
+local _GetChildren    = game.GetChildren
+local _FindFirstChild = game.FindFirstChild
+
+local DPS_REQ_RATE = 0.004  -- req rate สำหรับ mob snap
+local SNAP_SQ      = 100    -- 10 stud^2
 
 local DS2 = {
     hb=nil, aaConn=nil, aaHB=nil, lastAA=0,
-    conns={}, desc={}, folder={},
-    debs={}, unitCount=0,
-    hitCounter   = 0,
-    burstPending = 0,
-    lastBurst    = 0,
-    lastNoFire   = 0,
+    lastNoFire=0,
     scanFn=nil, mob=nil, part=nil,
     scanTick=0, chkTick=0,
+    folder={},
 }
 DS = DS2
 
+-- ── AA Keepalive ──────────────────────────────────────────────────────
 local function getAABool() return MyData:FindFirstChild("Auto_Attacks") end
 local function isAAOn()    local v=getAABool(); return v~=nil and v.Value==true end
 local function doAAOn()    R.Byte:FireServer(AA_ON); DS2.lastAA=os.clock() end
@@ -1514,83 +1516,74 @@ local function stopAAKeepalive()
     doAAOff()
 end
 
-local BURST_FRAMES    = 6
-local BURST_COOLDOWN  = 0.004
-local HIT_RATIO       = 0.35
-local STUCK_THRESH    = 50
-local DPS_REQ_RATE_HB = 0.004
-local SNAP_SQ         = 100
-
-local function triggerBurst()
-    if not dpsActive then return end
-    local now = os.clock()
-    if now - DS2.lastBurst < BURST_COOLDOWN then return end
-    if getgenv().safeBoostActive then
-        local dpsObj = lp:FindFirstChild("DPS")
-        if dpsObj and dpsObj.Value >= safeDMGLimit then
-            safeBoostUntil = now + 5.0; return
-        end
-    end
-    if now < safeBoostUntil then return end
-    DS2.lastBurst    = now
-    DS2.burstPending = BURST_FRAMES
-    DS2.hitCounter   = 0
-end
-
-local function checkHitThreshold()
-    if DS2.unitCount == 0 then return false end
-    return DS2.hitCounter >= math.max(1, math.ceil(DS2.unitCount * HIT_RATIO))
-end
-
+-- ── Master Heartbeat (Debounce-Scan Engine) ───────────────────────────
 local function startMasterHB()
     if DS2.hb then DS2.hb:Disconnect() end
-    local _stuckFrames = 0
 
     DS2.hb = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
-        local hrp2 = getHRP(); if not hrp2 then return end
-        local hum2 = hrp2.Parent and hrp2.Parent:FindFirstChildOfClass("Humanoid")
-        if not hum2 or hum2.Health <= 0 then return end
+        local hrp = getHRP(); if not hrp then return end
+        local hum = hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then return end
         local now = os.clock()
 
+        -- ── Lane 1: ATK + CLK keepalive ──────────────────────────────
         if now - _lastAtk >= Const.ATK_RATE then
-            _lastAtk = now
-            R.Byte:FireServer(unpack(attackArgs))
+            _lastAtk = now; R.Byte:FireServer(unpack(attackArgs))
         end
         if now - _lastClk >= Const.CLK_RATE then
-            _lastClk = now
-            R.Byte:FireServer(unpack(clickArgs))
+            _lastClk = now; R.Byte:FireServer(unpack(clickArgs))
         end
 
-        if DS2.burstPending > 0 then
-            R.Byte:FireServer(DPS_EQ)
-            R.Byte:FireServer(DPS_EQ)
-            R.Byte:FireServer(unpack(attackArgs))
-            _lastAtk = now
-            DS2.burstPending = DS2.burstPending - 1
-            _stuckFrames = 0
-        else
-            if DS2.unitCount == 0 then
+        -- ── Lane 2: Debounce-Scan DPS ─────────────────────────────────
+        -- Safe Boost: ถ้า DPS เกิน limit → หยุดยิง DPS_EQ 5s
+        if getgenv().safeBoostActive then
+            local dpsObj = lp:FindFirstChild("DPS")
+            if dpsObj and dpsObj.Value >= safeDMGLimit then
+                safeBoostUntil = now + 5.0
+            end
+        end
+
+        if now >= safeBoostUntil then
+            local plrFolder = unitServerFolder
+            if plrFolder and plrFolder.Parent then
+                -- [🔥] Method Cache: ใช้ _GetChildren และ _FindFirstChild
+                local units    = _GetChildren(plrFolder)
+                local numUnits = #units
+
+                if numUnits > 0 then
+                    -- เช็ค Debounce ทุก unit: ถ้า ALL = true → Double Strike
+                    local allTrue = true
+                    for i = 1, numUnits do
+                        local deb = _FindFirstChild(units[i], "Debounce")
+                        if not deb or deb.Value ~= true then
+                            allTrue = false; break
+                        end
+                    end
+                    if allTrue then
+                        -- 🔥 Double Strike: 2 จังหวะใน 1 frame, แรงแต่ไม่ flood network
+                        R.Byte:FireServer(DPS_EQ)
+                        R.Byte:FireServer(DPS_EQ)
+                    end
+                else
+                    -- ไม่มี unit → fallback fire ที่ dpsInputDelay
+                    if now - DS2.lastNoFire >= dpsInputDelay then
+                        DS2.lastNoFire = now
+                        R.Byte:FireServer(DPS_EQ)
+                        R.Byte:FireServer(DPS_EQ)
+                    end
+                end
+            else
+                -- folder ยังไม่พร้อม → fallback
                 if now - DS2.lastNoFire >= dpsInputDelay then
                     DS2.lastNoFire = now
                     R.Byte:FireServer(DPS_EQ)
                     R.Byte:FireServer(DPS_EQ)
                 end
             end
-            if DS2.unitCount > 0 then
-                if DS2.hitCounter == 0 then
-                    _stuckFrames = _stuckFrames + 1
-                    if _stuckFrames >= STUCK_THRESH then
-                        _stuckFrames = 0
-                        triggerBurst()
-                        task.defer(triggerBurst)
-                    end
-                else
-                    _stuckFrames = 0
-                end
-            end
         end
 
+        -- ── Lane 3: Mob Snap + Req (เมื่อ scanFn ใช้งานอยู่) ─────────
         if not DS2.scanFn then return end
         DS2.chkTick = DS2.chkTick + 1
         if DS2.chkTick % 2 == 0 then
@@ -1604,15 +1597,14 @@ local function startMasterHB()
         end
         if not DS2.mob or not DS2.part then return end
 
-        local hrp = getHRP(); if not hrp then return end
         local mPos = DS2.part.Position
-        local dv = hrp.Position - mPos
+        local dv   = hrp.Position - mPos
         if dv.X*dv.X + dv.Z*dv.Z > SNAP_SQ then
             killVelocity(hrp); hrp.CFrame = CFrame.new(mPos)
         end
 
         local last = pendingRequests[DS2.mob]
-        if not last or (now - last >= DPS_REQ_RATE_HB) then
+        if not last or (now - last >= DPS_REQ_RATE) then
             local mn = mobNameCache[DS2.mob]
             if not mn then mn = getValidMobName(DS2.mob) end
             if type(mn) == "string" and mn ~= "" and mn ~= "nil" then
@@ -1624,79 +1616,40 @@ local function startMasterHB()
     end)
 end
 
-local function findDebounce(unitInst)
-    local d = unitInst:FindFirstChild("Debounce")
-    if d and d:IsA("BoolValue") then return d end
-    for _, child in next, unitInst:GetChildren() do
-        local dd = child:FindFirstChild("Debounce")
-        if dd and dd:IsA("BoolValue") then return dd end
-    end
-    for _, v in next, unitInst:GetDescendants() do
-        if v.Name == "Debounce" and v:IsA("BoolValue") then return v end
-    end
-    return nil
-end
-
-local function wireUnit(unitInst)
-    local uName = unitInst.Name
-    if DS2.debs[uName] then return end
-
-    local deb = findDebounce(unitInst)
-    if not deb then
-        local dc
-        dc = unitInst.DescendantAdded:Connect(function(v)
-            if v.Name == "Debounce" and v:IsA("BoolValue") then
-                pcall(function() dc:Disconnect() end)
-                DS2.desc[uName] = nil
-                if dpsActive and not DS2.debs[uName] then wireUnit(unitInst) end
-            end
-        end)
-        DS2.desc[uName] = dc
-        return
-    end
-
-    DS2.debs[uName]  = deb
-    DS2.unitCount    = DS2.unitCount + 1
-
-    local prev = deb.Value
-    DS2.conns[uName] = deb:GetPropertyChangedSignal("Value"):Connect(function()
-        if not dpsActive then return end
-        local cur = deb.Value
-        if cur and not prev then
-            DS2.hitCounter = DS2.hitCounter + 1
-            if checkHitThreshold() then
-                triggerBurst()
-                if DS2.unitCount >= 3 then task.defer(triggerBurst) end
-            end
-        end
-        prev = cur
-    end)
-end
-
-local function unwireUnit(uName)
-    local c = DS2.conns[uName]; if c then pcall(function() c:Disconnect() end); DS2.conns[uName]=nil end
-    local d = DS2.desc[uName];  if d then pcall(function() d:Disconnect() end); DS2.desc[uName]=nil end
-    if DS2.debs[uName] then DS2.debs[uName]=nil; DS2.unitCount=math.max(0,DS2.unitCount-1) end
-end
-
+-- ── dpsCleanup ────────────────────────────────────────────────────────
 local function dpsCleanup_impl()
-    dpsActive = false
-    DS2.hitCounter=0; DS2.burstPending=0; DS2.lastBurst=0; DS2.lastNoFire=0
+    dpsActive    = false
+    DS2.lastNoFire = 0
     DS2.mob=nil; DS2.part=nil; DS2.scanFn=nil
-    DS2.debs={}; DS2.unitCount=0
     safeBoostUntil = 0
 
     pcall(function() R.Byte:FireServer(DPS_EQ) end)
 
     if DS2.hb then pcall(function() DS2.hb:Disconnect() end); DS2.hb=nil end
     stopAAKeepalive()
-    for _,c in next, DS2.conns  do pcall(function() c:Disconnect() end) end
-    for _,c in next, DS2.desc   do pcall(function() c:Disconnect() end) end
     for _,c in next, DS2.folder do pcall(function() c:Disconnect() end) end
-    DS2.conns={}; DS2.desc={}; DS2.folder={}
+    DS2.folder={}
     stopDPSPrecision()
 end
 dpsCleanup = dpsCleanup_impl
+
+-- ── Toggle ────────────────────────────────────────────────────────────
+Tabs.Pre:Input({
+    Title="Dmg Delay", Desc="default 0.02",
+    Value="0.02", Placeholder="0.005 – 2.0",
+    Callback=function(v)
+        local n = tonumber(v)
+        if n then dpsInputDelay = math.clamp(n, 0.005, 5.0) end
+    end
+})
+Tabs.Pre:Input({
+    Title="Safe DMG Limit", Desc="",
+    Value="2500000", Placeholder="Dmg Limit",
+    Callback=function(v)
+        local n = tonumber(v)
+        if n then safeDMGLimit = math.max(n, 1000) end
+    end
+})
 
 Tabs.Pre:Toggle({
     Title="DPS Boost", Flag="DPSBoost", Value=false,
@@ -1706,60 +1659,40 @@ Tabs.Pre:Toggle({
         end
         if not state then dpsCleanup(); return end
 
-        dpsActive = true
-        DS2.hitCounter=0; DS2.burstPending=0; DS2.lastBurst=0; DS2.lastNoFire=0
-        DS2.debs={}; DS2.unitCount=0
+        dpsActive      = true
+        DS2.lastNoFire = 0
         safeBoostUntil = 0
 
-        for _ = 1, 6 do
-            pcall(function() R.Byte:FireServer(DPS_EQ) end)
-            pcall(function() R.Byte:FireServer(DPS_EQ) end)
-        end
         startAAKeepalive()
         startMasterHB()
 
+        -- หา unit folder แบบ async ไม่บล็อก engine
         task.spawn(function()
             if not dpsActive then return end
-
             local unitsRoot = WorldsFolder:FindFirstChild("Units")
                            or WorldsFolder:WaitForChild("Units", 10)
-            if not unitsRoot or not dpsActive then dpsCleanup(); return end
+            if not unitsRoot or not dpsActive then return end
 
             local srvRoot = unitsRoot:FindFirstChild("Server")
                          or unitsRoot:WaitForChild("Server", 10)
-            if not srvRoot or not dpsActive then dpsCleanup(); return end
+            if not srvRoot or not dpsActive then return end
 
             local plrFolder = srvRoot:FindFirstChild(myName)
                            or srvRoot:WaitForChild(myName, 15)
-            if not plrFolder or not dpsActive then dpsCleanup(); return end
+            if not plrFolder or not dpsActive then return end
 
             unitServerFolder = plrFolder
 
-            for _, u in next, plrFolder:GetChildren() do
-                if not dpsActive then return end
-                wireUnit(u)
-            end
-            if not dpsActive then return end
-
-            task.wait(0.02)
-            if dpsActive then triggerBurst() end
-            task.wait(0.01)
-            if dpsActive then triggerBurst() end
-
-            local connAdded = plrFolder.ChildAdded:Connect(function(u)
-                if dpsActive then wireUnit(u) end
-            end)
-            local connRemoved = plrFolder.ChildRemoved:Connect(function(u)
-                unwireUnit(u.Name)
+            -- ติดตาม folder เพิ่ม/ลบ unit (อัพเดต unitServerFolder เสมอ)
+            local connAdded = plrFolder.ChildAdded:Connect(function()
+                unitServerFolder = plrFolder
             end)
             if not dpsActive then
-                pcall(function() connAdded:Disconnect() end)
-                pcall(function() connRemoved:Disconnect() end)
-                return
+                pcall(function() connAdded:Disconnect() end); return
             end
             table.insert(DS2.folder, connAdded)
-            table.insert(DS2.folder, connRemoved)
 
+            -- sync scanFn กับ farm toggles ที่เปิดอยู่
             if getgenv().autoNearest then
                 DS2.scanFn = function() return getNearestMobUniversal(math.huge) end
             elseif getgenv().autoSel then
@@ -1778,9 +1711,6 @@ Tabs.Pre:Toggle({
         end
         getgenv().safeBoostActive = state
         safeBoostUntil = 0
-        if not state and dpsActive then
-            task.defer(function() triggerBurst() end)
-        end
     end
 })
 
@@ -2046,7 +1976,8 @@ Tabs.Gen:Toggle({
 
             local function riftCleanup()
                 if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
-                getgenv().doRift = false
+                getgenv().doRift      = false
+                getgenv().riftSettling = false  -- clear semaphore ในทุกกรณี abort
                 if summonPaused and summonPauseReason == "rift" then
                     summonPaused = false; summonPauseReason = nil
                 end
@@ -2297,28 +2228,59 @@ Tabs.Gen:Toggle({
                 if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
                 cRiftMob = nil; cRiftPart = nil
 
-                if cancelFn() then riftCleanup(); setupWatchers(); continue end
+                if cancelFn() then riftCleanup(); getgenv().riftSettling=false; setupWatchers(); continue end
 
                 exitRiftViaTravel(cancelFn)
 
-                if cancelFn() then riftCleanup(); setupWatchers(); continue end
+                if cancelFn() then riftCleanup(); getgenv().riftSettling=false; setupWatchers(); continue end
+
+                -- ── Rift → Raid Handoff Protocol ─────────────────────────────────
+                -- 1. Set riftSettling BEFORE clearing doRift
+                --    → Raid wakes up แต่ raidYieldCheck() = true (riftSettling)
+                --    → ป้องกัน Raid ยิง preciseTpToStage ซ้อนกับ Rift's Lobby TP
+                -- 2. รอ player stable ที่ Lobby ก่อน
+                -- 3. ค่อย clear riftSettling → Raid จึงเดินหน้าได้
+                getgenv().riftSettling = true
 
                 if autoRiftRun and not cancelFn() then
                     lastStgUp = 0
+                    -- รอ player ถึง Lobby หลัง travel portal
                     if getStg() ~= "Lobby" then
-                        waitReady("Lobby", 15, teleportBuffers["Lobby"], 1.5, cancelFn)
+                        waitReady("Lobby", 18, teleportBuffers["Lobby"], 1.0, cancelFn)
+                    end
+                    -- triple-confirm: กันกรณี stage value เปลี่ยนแล้วยังไม่ stable จริง
+                    task.wait(0.5); lastStgUp = 0
+                    if isCharReady("Lobby") then
+                        task.wait(0.3); lastStgUp = 0
+                        if isCharReady("Lobby") then
+                            task.wait(0.2)
+                        end
                     end
                 end
 
-                riftCleanup()
+                -- Manual cleanup (ไม่เรียก riftCleanup() เพราะจะล้าง riftSettling ก่อนเวลา)
+                if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
+                getgenv().doRift = false  -- ✦ Raid wakes, still blocked by riftSettling=true
+                if summonPaused and summonPauseReason == "rift" then
+                    summonPaused = false; summonPauseReason = nil
+                end
                 disconnectWatchers()
-                task.wait(0.2)
+
+                -- buffer: 1 tick ให้ Raid loop เห็น riftSettling ก่อน navigate
+                task.wait(0.3)
+                -- flush caches: ให้ทุกระบบอ่าน stage ใหม่สด
+                lastStgUp = 0; lastHRPUp = 0
+                task.wait(0.2); lastStgUp = 0
+
+                getgenv().riftSettling = false  -- ✅ Raid ปลอดภัยเดินหน้าได้แล้ว
+
                 if autoRiftRun then setupWatchers() end
             end
 
             disconnectWatchers()
             if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
-            getgenv().doRift = false
+            getgenv().doRift      = false
+            getgenv().riftSettling = false
             if summonPaused and summonPauseReason == "rift" then
                 summonPaused = false; summonPauseReason = nil
             end
@@ -2761,7 +2723,9 @@ local function countRaidMobs(forceRefresh)
     return count
 end
 
-local function raidYieldCheck() return getgenv().doRift end
+-- raidYieldCheck: หยุด Raid operations เมื่อ Rift กำลังทำงาน หรือ กำลัง settle หลังจบ
+-- ป้องกัน Raid ยิง TP ซ้อนขณะ Rift กำลัง handoff stage
+local function raidYieldCheck() return getgenv().doRift or getgenv().riftSettling end
 
 local function collectBoxes()
     if raidYieldCheck() then return end
@@ -3087,15 +3051,42 @@ Tabs.Gen:Toggle({
                 if not waitUntilAlive(cancelRaid, 20) then break end
                 if not getgenv().autoRaid then break end
 
-                if getgenv().doRift then
+                if getgenv().doRift or getgenv().riftSettling then
+                    -- ── Raid หยุดรอ Rift ────────────────────────────────────────
+                    -- Step 1: abort raid session ถ้ากำลังอยู่ใน session
                     abortRaid(); stopSessionWatch(); stopMobWatch()
-                    while getgenv().autoRaid and getgenv().doRift do task.wait(0.12) end
+
+                    -- Step 2: รอ doRift หาย (Rift จบการต่อสู้)
+                    while getgenv().autoRaid and getgenv().doRift do task.wait(0.10) end
+
+                    -- Step 3: รอ riftSettling หาย (Rift handoff เสร็จ, player stable)
+                    -- raidYieldCheck() = true ตลอดช่วงนี้ → ป้องกัน TP ซ้อน
+                    local settleDl = os.clock() + 8.0
+                    while getgenv().autoRaid and getgenv().riftSettling and os.clock() < settleDl do
+                        task.wait(0.10)
+                    end
+                    -- Safety: ถ้า settling นาน > 8s ให้ clear เองเพื่อไม่ hang
+                    if getgenv().riftSettling then
+                        getgenv().riftSettling = false
+                        task.wait(0.3)
+                    end
+
+                    -- Step 4: Flush caches + รอ stage stable
+                    lastStgUp = 0; lastHRPUp = 0
+                    task.wait(0.25); lastStgUp = 0
+
                     if getgenv().autoRaid then
-                        lastStgUp=0
-                        if getStg()==sg() then
+                        -- อ่าน stage จริง (cache-busted)
+                        local curStage = getStg()
+                        local homeStage = sg()
+                        if curStage == homeStage then
+                            -- ✅ อยู่ home แล้ว → ข้าม TELEPORT ไป FIND_PAD เลย
                             if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
                             cAtt=0; setRaidSt("FIND_PAD")
-                        else setRaidSt("TELEPORT") end
+                        else
+                            -- อยู่ stage อื่น → TP กลับ home
+                            setRaidSt("TELEPORT")
+                        end
                         startSessionWatch(); startMobWatch()
                     end
                     continue
@@ -3683,7 +3674,8 @@ lp.CharacterRemoving:Connect(function()
     getgenv().safeBoostActive = false
     pcall(function() R.Hatch:FireServer(false) end)
 
-    getgenv().doRift=false;   getgenv().doBoss=false
+    getgenv().doRift=false;    getgenv().doBoss=false
+    getgenv().riftSettling=false
     getgenv().raidInP=false;  getgenv().raidSt="IDLE"
     getgenv().bossWaiting=false
     getgenv().autoRift=false; getgenv().autoTRun=false
