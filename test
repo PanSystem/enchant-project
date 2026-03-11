@@ -3066,43 +3066,104 @@ Tabs.Gen:Toggle({
                     if not getgenv().autoRaid or raidYieldCheck() then continue end
                     cAtt=0; sessionJustCreated=false; setRaidSt("CREATE")
                 elseif st=="CREATE" then
+                    -- ── Boss priority check ───────────────────────────────
                     if getgenv().autoBoss and isBossEventActive()
                        and (os.clock()-(getgenv().lastBossKill or 0)>=25) then
                         setRaidSt("FIND_PAD"); continue
                     end
-                    if stateAge()>12 then
-                        cAtt=0
-                        if not getgenv().isDD and #pads>0 then pIdx=(pIdx%#pads)+1 end
+
+                    -- ── Timeout guard: สร้างไม่สำเร็จใน 14s → retry ────────
+                    if stateAge() > 14 then
+                        cAtt = 0
+                        if getgenv().isDD then
+                            -- Double Dungeons: Reset ตัวละครแล้วเริ่มใหม่
+                            pcall(function()
+                                local char = lp.Character
+                                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                                if hum then hum.Health = 0 end
+                            end)
+                            task.wait(3.5)
+                            -- รอ respawn แล้วกลับ Dungeons Town
+                            local respawnDl = os.clock() + 12
+                            while os.clock() < respawnDl do
+                                if raidYieldCheck() or not getgenv().autoRaid then break end
+                                local char = lp.Character
+                                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                                local hum2 = char and char:FindFirstChildOfClass("Humanoid")
+                                if hrp and hum2 and hum2.Health > 0 and hrp.Position.Y > -50 then break end
+                                task.wait(0.15)
+                            end
+                            lastStgUp = 0
+                        else
+                            -- Normal: เปลี่ยน pad ใหม่
+                            if #pads > 0 then pIdx = (pIdx % #pads) + 1 end
+                        end
                         setRaidSt("FIND_PAD"); continue
                     end
+
                     forceSessionRefresh()
                     if getRaidSession() or sessionJustCreated then
-                        sessionJustCreated=false; setRaidSt("WAIT_ENTER"); continue
+                        sessionJustCreated = false; setRaidSt("WAIT_ENTER"); continue
                     end
-                    if cAtt==0 then
-                        lastStgUp=0; if getStg()~=sg() then setRaidSt("TELEPORT"); continue end
+
+                    -- ── ตรวจ stage ก่อน attempt แรก ──────────────────────
+                    if cAtt == 0 then
+                        lastStgUp = 0
+                        if getStg() ~= sg() then setRaidSt("TELEPORT"); continue end
                     end
-                    if os.clock()-lastCreateTime>=0.08 then
-                        lastCreateTime=os.clock()
+
+                    -- ── Fire Create ──────────────────────────────────────
+                    if os.clock() - lastCreateTime >= 0.08 then
+                        lastCreateTime = os.clock()
                         R.Raids:FireServer(
                             getgenv().isDD and "Double Dungeons" or getgenv().selRaidMap,
                             getgenv().selRaidDiff)
-                        cAtt=cAtt+1
+                        cAtt = cAtt + 1
                     end
-                    local cDl=os.clock()+0.8
-                    while os.clock()<cDl do
+
+                    -- ── รอ session สูงสุด 1s ────────────────────────────
+                    local cDl = os.clock() + 1.0
+                    while os.clock() < cDl do
                         if raidYieldCheck() then break end
-                        if sessionJustCreated then sessionJustCreated=false; setRaidSt("WAIT_ENTER"); break end
+                        if sessionJustCreated then
+                            sessionJustCreated = false; setRaidSt("WAIT_ENTER"); break
+                        end
                         forceSessionRefresh()
                         if getRaidSession() then setRaidSt("WAIT_ENTER"); break end
-                        task.wait(0.015)
+                        task.wait(0.012)
                     end
-                    if st~="WAIT_ENTER" then
-                        if cAtt>=6 then
-                            cAtt=0
-                            if not getgenv().isDD and #pads>0 then pIdx=(pIdx%#pads)+1 end
+
+                    if st ~= "WAIT_ENTER" then
+                        -- ── Retry logic ──────────────────────────────────
+                        if cAtt >= 8 then
+                            -- สร้างไม่สำเร็จ 8 ครั้ง
+                            cAtt = 0
+                            if getgenv().isDD then
+                                -- DD: Reset ตัวละคร
+                                pcall(function()
+                                    local char = lp.Character
+                                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                                    if hum then hum.Health = 0 end
+                                end)
+                                task.wait(3.5)
+                                local respawnDl = os.clock() + 12
+                                while os.clock() < respawnDl do
+                                    if raidYieldCheck() or not getgenv().autoRaid then break end
+                                    local char = lp.Character
+                                    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                                    local hum2 = char and char:FindFirstChildOfClass("Humanoid")
+                                    if hrp and hum2 and hum2.Health > 0 and hrp.Position.Y > -50 then break end
+                                    task.wait(0.15)
+                                end
+                                lastStgUp = 0
+                            else
+                                -- Normal: หาห้อง/pad ใหม่
+                                if #pads > 0 then pIdx = (pIdx % #pads) + 1 end
+                            end
                             setRaidSt("FIND_PAD")
-                        else task.wait(0.02) end
+                        else
+                            task.wait(0.02)
+                        end
                     end
                 elseif st=="WAIT_ENTER" then
                     if stateAge()>30 then
@@ -3232,6 +3293,55 @@ local function isBusy()
     return getgenv().doRift or getgenv().doBoss or (getgenv().raidInP and getRaidSession()~=nil)
 end
 
+-- ── ค้นหา Egg Model ที่ใกล้ที่สุดจาก workspace.Summoners ─────────────────
+-- SummonersFolder = Workspace:WaitForChild("Summoners")
+-- ภายใน Summoners จะมี Model ที่ชื่อตรงกับ targetMap เช่น "Namex Planet"
+-- อาจมีหลายตัว → เลือกตัวที่ใกล้ HRP มากที่สุด
+local function findNearestEggModel(targetMap)
+    if not SummonersFolder then return nil end
+    local hrp = getHRP()
+    if not hrp then return nil end
+    local hPos = hrp.Position
+    local best, bestSq = nil, math.huge
+
+    for _, child in next, SummonersFolder:GetChildren() do
+        if child.Name == targetMap then
+            -- หา BasePart ของ Model นี้เพื่อเทียบระยะ
+            local part = nil
+            if child:IsA("BasePart") then
+                part = child
+            elseif child:IsA("Model") then
+                part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart", true)
+            end
+            if part and part.Parent then
+                local d = hPos - part.Position
+                local dsq = d.X*d.X + d.Y*d.Y + d.Z*d.Z
+                if dsq < bestSq then bestSq = dsq; best = child end
+            end
+        end
+    end
+    return best
+end
+
+-- ── Snap ตัวเองไปที่ Egg Model ──────────────────────────────────────────
+local function snapToEggModel(model)
+    if not model then return false end
+    local part = nil
+    if model:IsA("BasePart") then
+        part = model
+    elseif model:IsA("Model") then
+        part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if not part or not part.Parent then return false end
+
+    local hrp = getHRP()
+    if not hrp then return false end
+    killVelocity(hrp)
+    hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+    task.wait(0.1)
+    return true
+end
+
 Tabs.Sum:Dropdown({
     Title="Select Egg", Flag="SummonEgg",
     Values={"Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town","Reaper Society"},
@@ -3249,10 +3359,13 @@ Tabs.Sum:Toggle({
             return
         end
         task.spawn(function()
-            local function cancelCheck()  return not getgenv().autoSummon end
-            local function isBlocked()    return isBusy() or summonPaused end
+            local function cancelCheck() return not getgenv().autoSummon end
+            local function isBlocked()   return isBusy() or summonPaused end
 
+            -- ── วาปไปด่านที่เลือก (ถ้ายังไม่อยู่) ─────────────────────
             local function tpToEggMap(targetMap)
+                -- อยู่ในด่านนั้นอยู่แล้ว → ไม่ต้องวาปซ้ำ
+                lastStgUp = 0
                 if getStg() == targetMap then
                     local char = lp.Character
                     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
@@ -3261,26 +3374,27 @@ Tabs.Sum:Toggle({
                         return true
                     end
                 end
+
                 local buf = teleportBuffers[targetMap]
                 if not buf then return false end
 
-                local deadline   = os.clock() + 30
-                local lastSend   = -99
-                local interval   = 1.0
-                local confirms   = 0
+                local deadline = os.clock() + 30
+                local lastSend = -99
+                local interval = 0.8
+                local confirms = 0
 
                 while os.clock() < deadline do
                     if cancelCheck() then return false end
-                    if isBlocked() then
-                        task.wait(0.5); continue
-                    end
+                    if isBlocked() then task.wait(0.4); continue end
+
                     local now = os.clock()
                     if now - lastSend >= interval then
                         R.Byte:FireServer(buf)
                         lastSend = now
-                        interval = math.min(interval * 1.3, 4.0)
+                        interval = math.min(interval * 1.4, 4.0)
                     end
-                    task.wait(0.10); lastStgUp = 0
+                    task.wait(0.08); lastStgUp = 0
+
                     if getStg() == targetMap then
                         local char = lp.Character
                         local hrp  = char and char:FindFirstChild("HumanoidRootPart")
@@ -3288,7 +3402,7 @@ Tabs.Sum:Toggle({
                         if hrp and hum and hrp.Position.Y > -50 and hum.Health > 0 then
                             confirms = confirms + 1
                             if confirms >= 2 then return true end
-                            task.wait(0.12); continue
+                            task.wait(0.10); continue
                         end
                     end
                     confirms = 0
@@ -3296,53 +3410,83 @@ Tabs.Sum:Toggle({
                 return false
             end
 
+            -- ── หาและ snap ไปที่ไข่ใกล้ที่สุด ────────────────────────────
+            local function goToNearestEgg(targetMap)
+                -- รีเฟรช SummonersFolder ถ้าหาย
+                if not SummonersFolder or not SummonersFolder.Parent then
+                    SummonersFolder = Workspace:FindFirstChild("Summoners")
+                    if not SummonersFolder then return false end
+                end
+
+                local eggModel = findNearestEggModel(targetMap)
+                if not eggModel then return false end
+
+                return snapToEggModel(eggModel)
+            end
+
+            -- ── Main loop ────────────────────────────────────────────────
             while getgenv().autoSummon do
                 if cancelCheck() then break end
 
-                local targetMap = getgenv().selSumm or "Namex Planet"
-
+                -- รอหาก system อื่นกำลัง busy
                 if isBlocked() then
                     pcall(sendHatchStop)
-                    while getgenv().autoSummon and isBlocked() do
-                        task.wait(0.3)
-                    end
+                    while getgenv().autoSummon and isBlocked() do task.wait(0.3) end
                     if cancelCheck() then break end
                 end
 
+                local targetMap = getgenv().selSumm or "Namex Planet"
+
+                -- ── Step 1: วาปไปด่าน (ถ้ายังไม่อยู่) ───────────────────
+                lastStgUp = 0
                 if getStg() ~= targetMap then
                     pcall(sendHatchStop)
                     local ok = tpToEggMap(targetMap)
                     if cancelCheck() then break end
-                    if not ok then
-                        task.wait(2.0); continue
-                    end
-                    task.wait(0.4)
+                    if not ok then task.wait(2.0); continue end
+                    task.wait(0.3)
+                end
+
+                if cancelCheck() then break end
+                if isBlocked() then pcall(sendHatchStop); continue end
+
+                -- ── Step 2: Snap ไปหาไข่ที่ใกล้ที่สุดใน Summoners ────────
+                local eggFound = goToNearestEgg(targetMap)
+                if not eggFound then
+                    -- ไม่เจอ Model → รอแล้วลองใหม่
+                    task.wait(0.5); continue
                 end
 
                 if cancelCheck() then break end
 
+                -- ── Step 3: เริ่ม Hatch ────────────────────────────────
                 sendHatchStart()
 
                 local _hatchKeepLast = os.clock()
-                while getgenv().autoSummon do
-                    task.wait(0.2)
-                    if cancelCheck() then break end
+                local _eggCheckLast  = os.clock()
 
-                    if isBlocked() then
-                        pcall(sendHatchStop)
-                        break
-                    end
+                while getgenv().autoSummon do
+                    task.wait(0.15)
+                    if cancelCheck() then break end
+                    if isBlocked() then pcall(sendHatchStop); break end
 
                     lastStgUp = 0
-                    if getStg() ~= targetMap then
-                        pcall(sendHatchStop)
-                        break
-                    end
+                    -- ออกจากด่าน → หยุดแล้ว re-enter loop
+                    if getStg() ~= targetMap then pcall(sendHatchStop); break end
 
                     local now = os.clock()
+
+                    -- Re-send HatchStart ทุก 3s เพื่อให้ server ไม่ timeout
                     if now - _hatchKeepLast >= 3.0 then
                         _hatchKeepLast = now
                         sendHatchStart()
+                    end
+
+                    -- ตรวจ snap ตัวเองไปหาไข่ทุก 5s เผื่อ model ย้าย
+                    if now - _eggCheckLast >= 5.0 then
+                        _eggCheckLast = now
+                        local eg = findNearestEggModel(targetMap)
+                        if eg then snapToEggModel(eg) end
                     end
                 end
             end
