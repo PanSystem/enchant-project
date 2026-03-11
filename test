@@ -1546,21 +1546,23 @@ local function anyUnitHit()
     return false
 end
 
-local DPS_REQ_RATE_HB = 0.012  -- [FIX DPS] เร็วขึ้น 0.015→0.012
-local SNAP_SQ = 4               -- [FIX DPS] snap radius ลดเหลือ 2 studs (4=2²)
+local DPS_REQ_RATE_HB = 0.012
+local SNAP_SQ = 4
 
--- [FIX DPS] startMasterHB — ปรับ state machine ให้ตัดสินใจเร็วขึ้น
+-- [FIX DPS v10] startMasterHB พร้อม unit-stuck watchdog
+-- เมื่อ unit ค้าง (debounce ทั้งหมด false นานเกิน threshold)
+-- → fire DPS_EQ เพื่อ unequip+equip ใหม่ทันที
 local function startMasterHB()
     if DS2.hb then DS2.hb:Disconnect() end
 
-    -- state: 0=รอ allHit, 1=กำลังรอ delay, 2=fire equip
-    local _eqFireNext = 0
+    local _stuckTimer   = 0      -- นับ frame ที่ unit ไม่ hit เลย
+    local _lastReEq     = 0      -- เวลา re-equip ล่าสุด
+    local STUCK_FRAMES  = 180    -- ~3s ที่ 60fps → trigger re-equip
 
     DS2.hb = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
         local now = os.clock()
 
-        -- ยิง atk/clk ทุก frame (rate limited)
         if now - _lastAtk >= Const.ATK_RATE then
             _lastAtk = now; R.Byte:FireServer(unpack(attackArgs))
         end
@@ -1575,22 +1577,18 @@ local function startMasterHB()
             if now < safeBoostUntil then return end
 
             local shouldFire = DS2.allHitFlag
-
-            -- fallback: ถ้าไม่มี unit → fire ตาม delay เอง
             if not shouldFire and DS2.unitCount == 0 then
                 shouldFire = now >= DS2.eqNext
             end
-
-            -- fallback: ถ้าทุก unit hit จริง (re-check)
             if not shouldFire and DS2.unitCount > 0 then
                 shouldFire = allUnitsHit()
             end
 
             if shouldFire then
-                DS2.allHitFlag = false
+                DS2.allHitFlag  = false
                 DS2.hitThisCycle = 0
+                _stuckTimer = 0  -- reset stuck timer เมื่อ cycle ใหม่เริ่ม
 
-                -- [FIX DPS] Safe boost check
                 if getgenv().safeBoostActive then
                     local dpsObj = lp:FindFirstChild("DPS")
                     if dpsObj and dpsObj.Value >= safeDMGLimit then
@@ -1600,10 +1598,30 @@ local function startMasterHB()
                         return
                     end
                 end
-
-                -- เข้า state 1: รอ delay แล้ว fire
                 DS2.eqState = 1
                 DS2.eqNext  = now + dpsInputDelay
+            else
+                -- [FIX DPS] Unit-stuck watchdog
+                -- ถ้ามี unit แต่ไม่มีใครตีเลย → นับ frame
+                if DS2.unitCount > 0 then
+                    local anyHit = false
+                    for _, deb in next, DS2.debs do
+                        if deb.Value then anyHit = true; break end
+                    end
+                    if not anyHit then
+                        _stuckTimer = _stuckTimer + 1
+                        if _stuckTimer >= STUCK_FRAMES and now - _lastReEq >= 2.5 then
+                            -- Unit ค้าง → unequip+equip ใหม่
+                            _stuckTimer = 0
+                            _lastReEq   = now
+                            R.Byte:FireServer(DPS_EQ)  -- fire equip signal
+                            DS2.allHitFlag  = false
+                            DS2.hitThisCycle = 0
+                        end
+                    else
+                        _stuckTimer = 0
+                    end
+                end
             end
 
         -- ── STATE 1: delay ครบ → fire ───────────────────────────────
@@ -1611,8 +1629,8 @@ local function startMasterHB()
             if now >= DS2.eqNext then
                 R.Byte:FireServer(DPS_EQ)
                 DS2.eqState = 0
-                -- [FIX DPS] reset eqNext ให้ fallback timer ทำงานถูก
                 DS2.eqNext  = now + dpsInputDelay * 2.0
+                _stuckTimer = 0
             end
         end
 
@@ -1620,7 +1638,6 @@ local function startMasterHB()
         if not DS2.scanFn then return end
 
         DS2.chkTick = DS2.chkTick + 1
-        -- [FIX DPS] check mob alive ทุก 2 frame (ลดจาก 3)
         if DS2.chkTick % 2 == 0 then
             if DS2.mob and (not DS2.mob.Parent or not isMobAlive(DS2.mob)) then
                 DS2.mob=nil; DS2.part=nil
@@ -1628,7 +1645,6 @@ local function startMasterHB()
         end
 
         DS2.scanTick = DS2.scanTick + 1
-        -- [FIX DPS] rescan ทุก 3 frame (ลดจาก 4)
         if not DS2.mob and DS2.scanTick % 3 == 0 then
             DS2.mob, DS2.part = DS2.scanFn()
         end
@@ -1636,13 +1652,11 @@ local function startMasterHB()
 
         local hrp = getHRP(); if not hrp then return end
         local mPos = DS2.part.Position
-        -- [FIX DPS] snap ถ้าห่างเกิน 2 studs (SNAP_SQ=4)
         local dv = hrp.Position - mPos
         if dv.X*dv.X + dv.Z*dv.Z > SNAP_SQ then
             hrp.CFrame = CFrame.new(mPos)
         end
 
-        -- [FIX DPS] ยิง req ทุก frame แต่ rate-limited ที่ 0.012s
         local last = pendingRequests[DS2.mob]
         if not last or (now - last >= DPS_REQ_RATE_HB) then
             local mn = mobNameCache[DS2.mob]
@@ -1849,35 +1863,70 @@ Tabs.Gen:Section({Title="Auto Rift"})
     5. Cleanup caches ทุกครั้งหลัง TP
 ]]
 
+-- [FIX RIFT v7] ตรวจสอบ mob ใน ServerTargets โดยตรง bypass cache ทุกครั้ง
+-- ใช้ Model:GetPivot() เป็น fallback หาก PrimaryPart/HRP ไม่มี
+local function getRiftMobPart(m)
+    if not m or not m.Parent then return nil end
+    local pp = m.PrimaryPart
+    if pp and pp.Parent then return pp end
+    local hrp = m:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp.Parent then return hrp end
+    -- fallback: หา BasePart ใดก็ได้ในโมเดล
+    for _, v in next, m:GetDescendants() do
+        if v:IsA("BasePart") and v.Parent then return v end
+    end
+    return nil
+end
+
+local function isRiftMobValid(m)
+    if not m or not m.Parent then return false end
+    if m.Name:sub(1,5) ~= "Rifts" then return false end
+    -- ตรวจ Humanoid โดยตรง (ไม่ใช้ cache เพื่อความแม่นยำ)
+    local h = m:FindFirstChildOfClass("Humanoid")
+    if not h or h.Health <= 0 then
+        mobHumCache[m] = false; return false
+    end
+    mobHumCache[m] = h
+    local pt = getRiftMobPart(m)
+    if not pt then return false end
+    local p = pt.Position
+    -- กรองตำแหน่ง void / zero
+    if p.Y < -200 then return false end
+    if math.abs(p.X) < 0.001 and math.abs(p.Z) < 0.001 and math.abs(p.Y) < 0.001 then return false end
+    return true
+end
+
 local function findNearestRiftMob()
+    -- [FIX] bypass getSTgts() cache → scan ตรงทุกครั้ง
     lastTgtUp = 0
-    local hrp=getHRP(); if not hrp then return nil,nil end
-    local hPos=hrp.Position; local bestMob,bestPart,bestDistSq=nil,nil,math.huge
-    for _,m in next,getSTgts() do
-        if m.Name:sub(1,5)=="Rifts" and isMobAlive(m) then
-            local pt=m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
+    local allTargets = ServerTargets:GetChildren()
+    cachedTargets = allTargets  -- อัพเดต cache ด้วย
+
+    local hrp = getHRP(); if not hrp then return nil, nil end
+    local hPos = hrp.Position
+    local bestMob, bestPart, bestDistSq = nil, nil, math.huge
+
+    for _, m in next, allTargets do
+        if isRiftMobValid(m) then
+            local pt = getRiftMobPart(m)
             if pt then
-                local d=hPos-pt.Position; local dsq=d.X*d.X+d.Y*d.Y+d.Z*d.Z
-                if dsq<bestDistSq then bestDistSq=dsq; bestMob=m; bestPart=pt end
+                local d = hPos - pt.Position
+                local dsq = d.X*d.X + d.Y*d.Y + d.Z*d.Z
+                if dsq < bestDistSq then
+                    bestDistSq = dsq; bestMob = m; bestPart = pt
+                end
             end
         end
     end
-    return bestMob,bestPart
+    return bestMob, bestPart
 end
 
 local function riftHasLiveMobs()
     lastTgtUp = 0
-    for _, m in ipairs(getSTgts()) do
-        if m.Name:sub(1,5)=="Rifts" and m.Parent then
-            local h = mobHumCache[m]
-            if h==nil then h=m:FindFirstChildOfClass("Humanoid"); mobHumCache[m]=h or false end
-            if not h or not h.Parent or h.Health<=0 then continue end
-            local pp = m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
-            if not pp or not pp.Parent then continue end
-            local p = pp.Position
-            if p.Y < -200 or (p.X==0 and p.Z==0 and p.Y==0) then continue end
-            return true
-        end
+    local allTargets = ServerTargets:GetChildren()
+    cachedTargets = allTargets
+    for _, m in next, allTargets do
+        if isRiftMobValid(m) then return true end
     end
     return false
 end
@@ -1973,28 +2022,96 @@ Tabs.Gen:Toggle({
             local inRift    = false
             local lastRiftEnd = 0  -- [FIX RIFT] cooldown หลังจบ
 
-            -- ── combat connection ────────────────────────────────────
+            -- ── combat connection v7 ─────────────────────────────────
+            -- [FIX RIFT v7] ตีมอนแบบ aggressive:
+            --   1. Force scan ทุก frame (ไม่ใช้ cache)
+            --   2. Snap ตรงไปมอน ทุก frame (ไม่ conditional)
+            --   3. Fire R.Req โดยตรง bypass pendingRequests rate-limit
+            --   4. Re-equip เมื่อเริ่ม combat และเมื่อ unit ค้าง
             local function startRiftCombat()
                 if Conns.rift then return end
+
+                -- Re-equip units ก่อนเริ่ม combat ทันที
+                if dpsActive then
+                    pcall(function() R.Byte:FireServer(buffer.fromstring("\026\000")) end)
+                end
+                sendAtk(); sendClk()
+
+                local _riftScanTick   = 0
+                local _riftReqLast    = 0
+                local _riftStuckTimer = 0  -- จับเวลากรณีหาม็อบไม่เจอ
+                local _riftReEqLast   = 0  -- จับเวลา re-equip
+
                 Conns.rift = RunService.Heartbeat:Connect(function()
                     if not autoRiftRun or not getgenv().autoRift then return end
+                    local now = os.clock()
+
+                    -- ยิง byte ทุก frame (rate-limited)
                     sendAtk(); sendClk()
 
-                    if cRiftMob and (not cRiftMob.Parent or not isMobAlive(cRiftMob)) then
-                        cRiftMob = nil; cRiftPart = nil; lastTgtUp = 0
+                    -- [FIX] Validate mob ปัจจุบัน
+                    if cRiftMob then
+                        if not cRiftMob.Parent or not isRiftMobValid(cRiftMob) then
+                            cRiftMob = nil; cRiftPart = nil
+                        else
+                            -- อัพเดต part (อาจ respawn)
+                            local newPt = getRiftMobPart(cRiftMob)
+                            if newPt then cRiftPart = newPt end
+                        end
                     end
+
+                    -- [FIX] Rescan ทุก 2 frame หากไม่มีม็อบ
+                    _riftScanTick = _riftScanTick + 1
                     if not cRiftMob then
-                        cRiftMob, cRiftPart = findNearestRiftMob()
+                        if _riftScanTick % 2 == 0 then
+                            cRiftMob, cRiftPart = findNearestRiftMob()
+                        end
+                        -- นับเวลาค้าง
+                        _riftStuckTimer = _riftStuckTimer + 1
+                        if _riftStuckTimer > 120 then  -- ~2s ที่ 60fps
+                            -- force flush caches แล้ว scan ใหม่ทันที
+                            _riftStuckTimer = 0
+                            for k in next, mobHumCache     do mobHumCache[k]=nil end
+                            for k in next, mobNameCache    do mobNameCache[k]=nil end
+                            for k in next, mobDisplayCache do mobDisplayCache[k]=nil end
+                            lastTgtUp = 0
+                            cRiftMob, cRiftPart = findNearestRiftMob()
+                        end
+                        if not cRiftMob then return end
+                    else
+                        _riftStuckTimer = 0
                     end
-                    if not cRiftMob or not cRiftPart then return end
+
+                    if not cRiftPart then
+                        cRiftPart = getRiftMobPart(cRiftMob)
+                        if not cRiftPart then cRiftMob = nil; return end
+                    end
 
                     local hrp = getHRP(); if not hrp then return end
-                    local dv = hrp.Position - cRiftPart.Position
-                    if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 16 then
-                        killVelocity(hrp)
-                        hrp.CFrame = CFrame.new(cRiftPart.Position)
+                    local mPos = cRiftPart.Position
+
+                    -- [FIX] SNAP ตรงไปมอน ทุก frame (ไม่ conditional)
+                    -- ใช้ killVelocity ก่อนเสมอเพื่อกัน server physics ดีด
+                    killVelocity(hrp)
+                    hrp.CFrame = CFrame.new(mPos)
+
+                    -- [FIX] Fire R.Req โดยตรง — bypass pendingRequests ทั้งหมด
+                    -- Rate limit เบาๆ ที่ 0.04s เพื่อไม่ flood server
+                    if now - _riftReqLast >= 0.04 then
+                        _riftReqLast = now
+                        local mn = cRiftMob.Name  -- Rifts mob ใช้ instance name โดยตรง
+                        if type(mn) == "string" and mn ~= "" then
+                            R.Req:FireServer(mn, "Mouse")
+                            pendingRequests[cRiftMob] = now
+                        end
                     end
-                    reqAttack(cRiftMob)
+
+                    -- [FIX] Re-equip watchdog: ถ้า dpsActive → re-equip ทุก 3s
+                    -- ป้องกัน unit ค้าง/unequip ระหว่าง rift
+                    if dpsActive and now - _riftReEqLast >= 3.0 then
+                        _riftReEqLast = now
+                        pcall(function() R.Byte:FireServer(buffer.fromstring("\026\000")) end)
+                    end
                 end)
             end
 
@@ -2148,27 +2265,49 @@ Tabs.Gen:Toggle({
                 -- double-confirm มอนมีจริง
                 lastTgtUp = 0; task.wait(0.1)
 
-                -- ── COMBAT PHASE ─────────────────────────────────────
+                -- ── COMBAT PHASE v7 ──────────────────────────────────
+                -- [FIX] รอมอนอีก 1 รอบถ้าเพิ่งเข้า (spawn อาจช้า)
+                if not riftHasLiveMobs() then
+                    local extraWait = os.clock() + 8
+                    while os.clock() < extraWait and autoRiftRun do
+                        if riftHasLiveMobs() then break end
+                        task.wait(0.2)
+                    end
+                end
+
                 if riftHasLiveMobs() then
-                    -- snap ไปหามอนก่อนเลย
-                    local _, np = findNearestRiftMob()
-                    if np then
+                    -- [FIX] Snap ตรงไปมอนก่อนเริ่ม + re-equip ถ้า dpsActive
+                    local initMob, initPart = findNearestRiftMob()
+                    if initPart then
                         local hrpNow = getHRP()
                         if hrpNow then
-                            killVelocity(hrpNow)
-                            hrpNow.CFrame = CFrame.new(np.Position)
+                            for _ = 1, 3 do
+                                killVelocity(hrpNow)
+                                hrpNow.CFrame = CFrame.new(initPart.Position)
+                                task.wait(0.03)
+                            end
                         end
                     end
+                    -- Fire initial attack ก่อน startCombat
+                    sendAtk(); sendClk()
+                    if initMob then
+                        pcall(function() R.Req:FireServer(initMob.Name, "Mouse") end)
+                    end
+
                     startRiftCombat()
 
                     local combatDl = os.clock() + 300
+                    local _noMobTick = 0
                     while autoRiftRun and os.clock() < combatDl do
                         task.wait(0.10)
-                        lastTgtUp = 0
                         if not riftHasLiveMobs() then
-                            -- double-confirm
-                            task.wait(0.4); lastTgtUp = 0
-                            if not riftHasLiveMobs() then break end
+                            _noMobTick = _noMobTick + 1
+                            if _noMobTick >= 4 then
+                                -- confirm 4 ครั้ง (~0.4s) ว่าม็อบหมดจริง
+                                break
+                            end
+                        else
+                            _noMobTick = 0
                         end
                     end
                     stopRiftCombat()
