@@ -2139,10 +2139,15 @@ Tabs.Gen:Toggle({
                 summonPaused      = true
                 summonPauseReason = "rift"
 
-                -- หยุด Raid ถ้ากำลังทำอยู่
-                if getgenv().raidInP and getRaidSession() then
+                -- ── หยุด Raid/Boss ทันที → ความสำคัญ Rift สูงสุด ─────────────
+                if getgenv().raidInP or getRaidSession() then
                     pcall(function() R.RaidsL:FireServer("Leave") end)
-                    task.wait(0.15); getgenv().raidInP = false
+                    task.wait(0.10)
+                    pcall(function() R.RaidsL:FireServer("Leave") end)
+                    -- รอให้ raidInP หายภายใน 2s
+                    local rWait = os.clock() + 2
+                    while getgenv().raidInP and os.clock() < rWait do task.wait(0.08) end
+                    getgenv().raidInP = false
                 end
 
                 -- ── วาปไป Reaper Society ──────────────────────────────────
@@ -3173,6 +3178,13 @@ Tabs.Gen:Toggle({
                         end
                         setRaidSt("IDLE"); continue
                     end
+                    -- Rift สำคัญกว่า → ออก WAIT_ENTER ทันที
+                    if getgenv().doRift then
+                        pcall(function() R.RaidsL:FireServer("Leave") end)
+                        task.wait(0.10); getgenv().raidInP=false
+                        if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
+                        setRaidSt("IDLE"); continue
+                    end
                     getgenv().raidInP=true; summonPaused=true; summonPauseReason="raid"
                     lastTgtUp=0; mobJustAppeared=false
                     if mobJustAppeared or countRaidMobs(true)>0 then
@@ -3190,11 +3202,15 @@ Tabs.Gen:Toggle({
                     if not inCombat then startRaidCombat() end
                     local fDl=os.clock()+300
                     while os.clock()<fDl and getgenv().autoRaid do
+                        -- ── Rift มีความสำคัญสูงสุด → หยุด Raid ทันที ────────────────
                         if getgenv().doRift then
                             cleanupCombat()
+                            -- Auto Rift จะ Leave เองอยู่แล้ว แต่ fire ซ้ำเพื่อความแน่นอน
                             pcall(function() R.RaidsL:FireServer("Leave") end)
-                            task.wait(0.12); getgenv().raidInP=false
+                            task.wait(0.10); getgenv().raidInP=false
                             if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
+                            -- reset state แล้ว break ออกจาก inner loop ทันที
+                            -- outer loop จะเจอ doRift และรอ Rift เสร็จเอง
                             setRaidSt("IDLE"); break
                         end
                         forceSessionRefresh()
@@ -3323,7 +3339,7 @@ local function findNearestEggModel(targetMap)
     return best
 end
 
--- ── Snap ตัวเองไปที่ Egg Model ──────────────────────────────────────────
+-- ── Snap ตัวเองไปที่ Egg Model (force snap เสมอ) ────────────────────────
 local function snapToEggModel(model)
     if not model then return false end
     local part = nil
@@ -3338,8 +3354,24 @@ local function snapToEggModel(model)
     if not hrp then return false end
     killVelocity(hrp)
     hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
-    task.wait(0.1)
+    task.wait(0.08)
     return true
+end
+
+-- ── ตรวจว่าห่างจาก Egg เกิน 6 stud หรือไม่ ─────────────────────────────
+local EGG_SNAP_SQ = 36  -- 6 stud²
+local function isfarFromEgg(model)
+    if not model then return true end
+    local part = nil
+    if model:IsA("BasePart") then part = model
+    elseif model:IsA("Model") then
+        part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if not part or not part.Parent then return true end
+    local hrp = getHRP()
+    if not hrp then return true end
+    local dv = hrp.Position - part.Position
+    return (dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z) > EGG_SNAP_SQ
 end
 
 Tabs.Sum:Dropdown({
@@ -3463,10 +3495,11 @@ Tabs.Sum:Toggle({
                 sendHatchStart()
 
                 local _hatchKeepLast = os.clock()
-                local _eggCheckLast  = os.clock()
+                local _distCheckLast = os.clock()
+                local cachedEgg      = findNearestEggModel(targetMap)
 
                 while getgenv().autoSummon do
-                    task.wait(0.15)
+                    task.wait(0.12)
                     if cancelCheck() then break end
                     if isBlocked() then pcall(sendHatchStop); break end
 
@@ -3482,11 +3515,16 @@ Tabs.Sum:Toggle({
                         sendHatchStart()
                     end
 
-                    -- ตรวจ snap ตัวเองไปหาไข่ทุก 5s เผื่อ model ย้าย
-                    if now - _eggCheckLast >= 5.0 then
-                        _eggCheckLast = now
-                        local eg = findNearestEggModel(targetMap)
-                        if eg then snapToEggModel(eg) end
+                    -- ── ตรวจระยะทุก 0.5s: ห่างเกิน 6 stud → snap ────────
+                    if now - _distCheckLast >= 0.5 then
+                        _distCheckLast = now
+                        -- Refresh cached egg ทุก 5s
+                        if now - _distCheckLast >= 5.0 or not cachedEgg or not cachedEgg.Parent then
+                            cachedEgg = findNearestEggModel(targetMap)
+                        end
+                        if cachedEgg and isfarFromEgg(cachedEgg) then
+                            snapToEggModel(cachedEgg)
+                        end
                     end
                 end
             end
