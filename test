@@ -1997,26 +1997,26 @@ Tabs.Gen:Toggle({
             end
 
             -- ==========================================
-            -- MAIN LOOP — TimeLeft-based detection
+            -- ==========================================
+            -- MAIN LOOP — TimeLeft 0-10 trigger
+            -- เช็ค TimeLeft.Value ทุก 0.5s
+            -- เมื่อ TimeLeft > 0 และ <= 10 → วาปไปทำ Rift
+            -- เสร็จแล้วกลับมารอรอบต่อไปด้วย logic เดิม
             -- ==========================================
             while autoRiftRun do
                 if not getgenv().autoRift then break end
 
                 local tl = getRiftTimeLeft()
 
-                -- ── ไม่มี Rift ──────────────────────────────────────
-                if tl <= 0 then
-                    if inRift then
-                        -- Rift จบแล้ว → ออก
-                        doExitRift()
-                    end
-                    -- รอ Rift ถัดไป poll ทุก 0.5s
+                -- ── ยังไม่ถึงเวลา (TimeLeft > 10 หรือ = 0) → รอ ──
+                if not (tl > 0 and tl <= 10) then
+                    -- ถ้าเพิ่งจบ Rift ค้างอยู่ → cleanup
+                    if inRift then doExitRift() end
                     task.wait(0.5)
                     continue
                 end
 
-                -- ── มี Rift (TimeLeft > 0) ──────────────────────────
-                -- [FIX] ถ้า TimeLeft <= 10 หรือ > 0 → TP ไปรอด่านทันที
+                -- ── TimeLeft อยู่ในช่วง 0 < tl <= 10 → เข้า Rift ──
                 if not inRift then
                     -- หยุด Raid ถ้ากำลังอยู่
                     if getgenv().raidInP then
@@ -2028,24 +2028,23 @@ Tabs.Gen:Toggle({
                         end
                     end
 
-                    getgenv().doRift    = true
-                    inRift              = true
-                    summonPaused        = true
-                    summonPauseReason   = "rift"
+                    getgenv().doRift  = true
+                    inRift            = true
+                    summonPaused      = true
+                    summonPauseReason = "rift"
 
-                    -- TP ไป Reaper Society
+                    -- TP ไป Reaper Society (ถ้ายังไม่อยู่)
                     if getStg() ~= "Reaper Society" then
                         local cancelRift = function() return not autoRiftRun or not getgenv().autoRift end
                         local ok = tpToRiftStage(cancelRift)
                         if not ok then
-                            -- TP ล้มเหลว → reset
                             inRift = false; getgenv().doRift = false
                             if summonPaused and summonPauseReason=="rift" then
                                 summonPaused=false; summonPauseReason=nil
                             end
                             task.wait(1.5); continue
                         end
-                        -- reset cache ทั้งหมดหลัง TP
+                        -- reset cache หลัง TP
                         lastTgtUp=0; lastHRPUp=0; lastPartUp=0
                         for k in next, mobHumCache     do mobHumCache[k]=nil end
                         for k in next, mobNameCache    do mobNameCache[k]=nil end
@@ -2054,15 +2053,14 @@ Tabs.Gen:Toggle({
                     end
                 end
 
-                -- อยู่ใน Reaper Society แล้ว → หามอนและตี
+                -- ── อยู่ใน Reaper Society แล้ว → หามอนตี / ใช้ portal ──
                 lastTgtUp = 0
                 local hasMobs = riftHasLiveMobs()
 
                 if hasMobs then
-                    -- มีมอน → start/keep combat
+                    -- มีมอน → snap ไปและตี
                     if not Conns.rift then
-                        -- snap ไปมอบก่อนเริ่ม combat
-                        local nm, np = findNearestRiftMob()
+                        local _, np = findNearestRiftMob()
                         if np then
                             local hrpNow = getHRP()
                             if hrpNow then
@@ -2074,13 +2072,10 @@ Tabs.Gen:Toggle({
                     end
                     task.wait(0.06)
                 else
-                    -- ไม่มีมอน อาจเป็น portal / wave หยุด combat loop
+                    -- ไม่มีมอน → เช็ค portal / รอ wave
                     stopRiftCombat()
-
-                    -- เช็ค portal
                     local prm, part = findRiftPortalEntry()
                     if prm and prm.Parent and prm.Enabled then
-                        -- มี portal → fire
                         if part and part.Parent then
                             local hrpNow = getHRP()
                             if hrpNow then
@@ -2091,7 +2086,12 @@ Tabs.Gen:Toggle({
                         end
                         firePrompt(prm); task.wait(0.06)
                     else
+                        -- รอมอน spawn หรือ TimeLeft หมด
                         task.wait(0.25)
+                        -- ถ้า TimeLeft กลับเป็น 0 แล้ว (rift จบ) → exit
+                        if getRiftTimeLeft() <= 0 then
+                            doExitRift()
+                        end
                     end
                 end
             end
