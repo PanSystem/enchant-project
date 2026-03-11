@@ -523,7 +523,7 @@ local dpsCurrentMob    = nil
 local dpsCurrentPart   = nil
 local _dpsScanFrame    = 0
 local _dpsMobCheckTick = 0
-local DPS_REQ_RATE     = 0.015  -- ↑ faster request rate
+local DPS_REQ_RATE     = 0.015
 
 local DS = { scanFn=nil, mob=nil, part=nil, eqState=0, eqNext=0,
              hb=nil, aaConn=nil, aaHB=nil, lastAA=0,
@@ -1422,7 +1422,12 @@ Tabs.Gen:Toggle({
     end
 })
 
-local function makeFarmConn(getScanFn, flagName)
+-- ==========================================
+-- [FIX] makeFarmConn — directTp parameter
+--   directTp=false (Auto Nearest): เช็คระยะ ATK_D_SQ เท่านั้น ไม่ TP
+--   directTp=true  (Auto Selected & others): TP ตรงไปที่มอนทันที
+-- ==========================================
+local function makeFarmConn(getScanFn, flagName, directTp)
     local cT,cP=nil,nil; local lastScan=0
     return RunService.Heartbeat:Connect(function()
         if not getgenv()[flagName] then return end
@@ -1435,10 +1440,22 @@ local function makeFarmConn(getScanFn, flagName)
             if not cT.Parent or not isMobAlive(cT) then cT=nil; cP=nil
             else
                 local d=hrp.Position-cP.Position
-                if d.X*d.X+d.Y*d.Y+d.Z*d.Z>Const.ATK_D_SQ then
-                    killVelocity(hrp); hrp.CFrame=CFrame.new(cP.Position+d.Unit*3)
+                local dsq=d.X*d.X+d.Y*d.Y+d.Z*d.Z
+                if directTp then
+                    -- TP ตรงไปหามอนเลย
+                    if dsq > Const.SNAP_D_SQ then
+                        killVelocity(hrp)
+                        hrp.CFrame = CFrame.new(cP.Position)
+                    end
+                    reqAttack(cT)
+                else
+                    -- Auto Nearest: เช็คระยะเท่านั้น ถ้าไกลเกินให้หามอนใหม่
+                    if dsq > Const.ATK_D_SQ then
+                        cT=nil; cP=nil; return
+                    end
+                    reqAttack(cT)
                 end
-                reqAttack(cT); return
+                return
             end
         end
         local now=os.clock()
@@ -1447,6 +1464,7 @@ local function makeFarmConn(getScanFn, flagName)
     end)
 end
 
+-- Auto Nearest: directTp=false → เช็คมอนในระยะ ATK_D_SQ เท่านั้น ไม่ TP
 Tabs.Gen:Toggle({
     Title="Auto Attack Nearest", Flag="AutoNearest", Value=false,
     Callback=function(state)
@@ -1459,7 +1477,7 @@ Tabs.Gen:Toggle({
         end
         local scanFn=function() return getNearestMobUniversal(dpsActive and math.huge or Const.ATK_D_SQ) end
         if dpsActive then DS.scanFn=scanFn end
-        Conns.near=makeFarmConn(scanFn,"autoNearest")
+        Conns.near=makeFarmConn(scanFn, "autoNearest", false)
         task.spawn(function()
             local prev=dpsActive
             while getgenv().autoNearest do task.wait(0.2)
@@ -1472,6 +1490,7 @@ Tabs.Gen:Toggle({
     end
 })
 
+-- Auto Selected: directTp=true → TP ตรงไปที่มอนเลย
 Tabs.Gen:Toggle({
     Title="Auto Attack Selected", Flag="AutoSelected", Value=false,
     Callback=function(state)
@@ -1487,7 +1506,7 @@ Tabs.Gen:Toggle({
             return findSelectedMob()
         end
         if dpsActive then DS.scanFn=scanFn end
-        Conns.sel=makeFarmConn(scanFn,"autoSel")
+        Conns.sel=makeFarmConn(scanFn, "autoSel", true)
         task.spawn(function()
             local prev=dpsActive
             while getgenv().autoSel do task.wait(0.2)
@@ -1512,7 +1531,7 @@ local DPS_EQ = buffer.fromstring("\026\000")
 
 local dpsInputDelay  = 0.08
 local safeDMGLimit   = 2000000
-local safeBoostUntil = 0   -- ★ NEW: timestamp ห้ามยิง EQ จนถึงเวลานี้
+local safeBoostUntil = 0
 getgenv().safeBoostActive = false
 
 Tabs.Pre:Input({
@@ -1532,23 +1551,16 @@ Tabs.Pre:Input({
     end
 })
 
--- ══════════════════════════════════════════════════════════════════════════
--- STATE TABLE
--- ══════════════════════════════════════════════════════════════════════════
 local DS = {
     hb=nil, aaConn=nil, aaHB=nil, lastAA=0,
     conns={}, desc={}, folder={},
     debs={}, unitCount=0,
-    -- 2-state machine
-    eqState=0,       -- 0=WAIT_ALL_HIT  1=WAIT_FIRE
-    eqNext=0,
+    eqState=0, eqNext=0,
     allHitFlag=false,
-    -- mob tracking
     scanFn=nil, mob=nil, part=nil,
     scanTick=0, chkTick=0,
 }
 
--- ── AA helpers ────────────────────────────────────────────────────────────
 local function getAABool() return MyData:FindFirstChild("Auto_Attacks") end
 local function isAAOn()    local v=getAABool(); return v~=nil and v.Value==true end
 local function doAAOn()    R.Byte:FireServer(AA_ON); DS.lastAA=os.clock() end
@@ -1558,7 +1570,6 @@ local function wireAA(av)
     if DS.aaConn then pcall(function() DS.aaConn:Disconnect() end) end
     DS.aaConn = av:GetPropertyChangedSignal("Value"):Connect(function()
         if not dpsActive or av.Value then return end
-        -- ★ ไม่ใช้ task.defer เพื่อตอบสนองทันที
         if dpsActive and not isAAOn() then doAAOn() end
     end)
 end
@@ -1591,7 +1602,6 @@ local function stopAAKeepalive()
     doAAOff()
 end
 
--- ── allUnitsHit: ตรวจทุก unit ตีแล้ว ─────────────────────────────────────
 local function allUnitsHit()
     if DS.unitCount == 0 then return false end
     for _, deb in next, DS.debs do
@@ -1600,7 +1610,6 @@ local function allUnitsHit()
     return true
 end
 
--- ── Master Heartbeat ──────────────────────────────────────────────────────
 local DPS_REQ_RATE_HB = 0.015
 local SNAP_SQ         = Const.SNAP_D_SQ
 
@@ -1610,7 +1619,6 @@ local function startMasterHB()
         if not dpsActive then return end
         local now = os.clock()
 
-        -- ① ATK / CLK
         if now - _lastAtk >= Const.ATK_RATE then
             _lastAtk = now; R.Byte:FireServer(unpack(attackArgs))
         end
@@ -1618,11 +1626,9 @@ local function startMasterHB()
             _lastClk = now; R.Byte:FireServer(unpack(clickArgs))
         end
 
-        -- ② EQ STATE MACHINE
         local st = DS.eqState
 
         if st == 0 then
-            -- ★ Safe Boost cooldown gate (ป้องกัน EQ ยิงซ้ำจนครบ 5s)
             if now < safeBoostUntil then return end
 
             local hit = DS.allHitFlag
@@ -1632,11 +1638,9 @@ local function startMasterHB()
             if hit then
                 DS.allHitFlag = false
 
-                -- ★ Safe Boost: เช็ค DPS value เทียบ limit
                 if getgenv().safeBoostActive then
                     local dpsObj = lp:FindFirstChild("DPS")
                     if dpsObj and dpsObj.Value >= safeDMGLimit then
-                        -- ★ บังคับรอ 5 วินาทีแล้วรีเซ็ต
                         safeBoostUntil = now + 5.0
                         DS.eqState     = 0
                         DS.allHitFlag  = false
@@ -1656,7 +1660,6 @@ local function startMasterHB()
             end
         end
 
-        -- ③ Mob tracking
         if not DS.scanFn then return end
 
         DS.chkTick = DS.chkTick + 1
@@ -1689,7 +1692,6 @@ local function startMasterHB()
     end)
 end
 
--- ── Fallback auto-fire (ไม่มี unit) ──────────────────────────────────────
 local _autoFireHB = nil
 local function startAutoFire()
     if _autoFireHB then return end
@@ -1705,7 +1707,6 @@ local function stopAutoFire()
     if _autoFireHB then pcall(function() _autoFireHB:Disconnect() end); _autoFireHB = nil end
 end
 
--- ── Unit wiring ───────────────────────────────────────────────────────────
 local function findDebounce(unitInst)
     local d = unitInst:FindFirstChild("Debounce")
     if d and d:IsA("BoolValue") then return d end
@@ -1742,7 +1743,6 @@ local function wireUnit(unitInst)
         if not dpsActive then return end
         local cur = deb.Value
 
-        -- ★ false→true: unit ตีแล้ว → ตรวจ allUnitsHit ทันที (ไม่ defer)
         if cur and not prev then
             if DS.eqState == 0 and allUnitsHit() then
                 DS.allHitFlag = true
@@ -1759,7 +1759,6 @@ local function unwireUnit(uName)
     if DS.debs[uName] then DS.debs[uName]=nil; DS.unitCount=math.max(0,DS.unitCount-1) end
 end
 
--- ── Cleanup ───────────────────────────────────────────────────────────────
 local function dpsCleanup_impl()
     dpsActive = false
     DS.eqState=0; DS.eqNext=0; DS.allHitFlag=false
@@ -1780,7 +1779,6 @@ local function dpsCleanup_impl()
 end
 dpsCleanup = dpsCleanup_impl
 
--- ── Toggle ────────────────────────────────────────────────────────────────
 Tabs.Pre:Toggle({
     Title="DPS Boost", Flag="DPSBoost", Value=false,
     Callback=function(state)
@@ -1830,7 +1828,6 @@ Tabs.Pre:Toggle({
     end
 })
 
--- ── Safe Boost ────────────────────────────────────────────────────────────
 Tabs.Pre:Toggle({
     Title="Safe Boost", Desc="หยุด 5s เมื่อ DMG เกิน limit",
     Flag="SafeBoost", Value=false,
@@ -1839,7 +1836,7 @@ Tabs.Pre:Toggle({
             pcall(function() Window.Flags["SafeBoost"]:Set(false) end); return
         end
         getgenv().safeBoostActive = state
-        safeBoostUntil = 0  -- ★ reset cooldown เมื่อ toggle
+        safeBoostUntil = 0
         if not state and dpsActive then
             task.defer(function() R.Byte:FireServer(DPS_EQ) end)
         end
@@ -1851,7 +1848,6 @@ Tabs.Pre:Toggle({
 -- ==========================================
 Tabs.Gen:Section({Title="Auto Rift"})
 
--- ── Rift mob scanner ──────────────────────────────────────────────────────
 local function findNearestRiftMob()
     local hrp=getHRP(); if not hrp then return nil,nil end
     local hPos=hrp.Position; local bestMob,bestPart,bestDistSq=nil,nil,math.huge
@@ -1908,25 +1904,21 @@ local function riftExists()
     return false
 end
 
--- ★ NEW: ค้นหา Portal ใน Raids_Visual["Reaper Society_Rift_*"]
 local function findRiftPortalEntry()
     if not RaidsVisual then return nil, nil end
     for _, f in next, RaidsVisual:GetChildren() do
-        -- ตรวจชื่อขึ้นต้นด้วย "Reaper Society_Rift_"
         if f.Name:sub(1, 20) == "Reaper Society_Rift_" then
             local cfg = f:FindFirstChild("Configs")
             local oth = cfg and cfg:FindFirstChild("Others")
             local por = oth and oth:FindFirstChild("Portal")
             local trv = por and por:FindFirstChild("Travel")
             if trv then
-                -- หา ProximityPrompt
                 local prm = trv:FindFirstChildWhichIsA("ProximityPrompt")
                 if not prm then
                     for _, v in next, trv:GetDescendants() do
                         if v:IsA("ProximityPrompt") then prm = v; break end
                     end
                 end
-                -- หา BasePart เพื่อ TP ไปหา
                 local part = nil
                 if trv:IsA("BasePart") then
                     part = trv
@@ -1935,7 +1927,6 @@ local function findRiftPortalEntry()
                 else
                     part = trv:FindFirstChildWhichIsA("BasePart")
                 end
-                -- ถ้าไม่มี part ให้ดึงจาก parent
                 if not part and prm then
                     local pp = prm.Parent
                     if pp and pp:IsA("BasePart") then part = pp
@@ -1948,7 +1939,6 @@ local function findRiftPortalEntry()
     return nil, nil
 end
 
--- ★ NEW: ออกจาก Rift ผ่าน Portal (fire prompt จนกลับ Lobby)
 local function exitRiftViaPortal(cancelFn)
     local LEASH_SQ  = 5 * 5
     local deadline  = os.clock() + 35
@@ -1957,7 +1947,6 @@ local function exitRiftViaPortal(cancelFn)
     while os.clock() < deadline do
         if cancelFn and cancelFn() then return false end
 
-        -- เช็คกลับ Lobby แล้วหรือยัง
         local now = os.clock()
         if now - lastCheck >= 0.12 then
             lastCheck = now; lastStgUp = 0
@@ -1969,7 +1958,6 @@ local function exitRiftViaPortal(cancelFn)
 
         local prm, part = findRiftPortalEntry()
         if prm and prm.Parent and prm.Enabled then
-            -- TP ไปหา portal part
             if part and part.Parent then
                 local hrp = getHRP()
                 if hrp then
@@ -1981,16 +1969,13 @@ local function exitRiftViaPortal(cancelFn)
                     end
                 end
             end
-            -- Fire prompt
             firePrompt(prm)
             task.wait(0.06)
         else
-            -- Portal ยังไม่ปรากฏ หรือ disabled → รอสักครู่
             task.wait(0.15)
         end
     end
 
-    -- Fallback: force TP Lobby
     return tpToLobbyConfirmed()
 end
 
@@ -2097,14 +2082,12 @@ Tabs.Gen:Toggle({
             local cRiftPart   = nil
             local riftEngaged = false
 
-            -- ── endRift: cleanup + ออก Lobby ───────────────────────────
             local function endRift()
                 if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
                 cRiftMob = nil; cRiftPart = nil
                 riftEngaged = false
 
                 if getgenv().doRift then
-                    -- ★ ลองออกผ่าน Portal ก่อน ถ้าอยู่ใน Reaper Society
                     lastStgUp = 0
                     if getStg() == "Reaper Society" then
                         local cancelEnd = function()
@@ -2112,7 +2095,6 @@ Tabs.Gen:Toggle({
                         end
                         local ok = exitRiftViaPortal(cancelEnd)
                         if not ok then
-                            -- Fallback force TP
                             tpToLobbyConfirmed()
                         end
                     elseif getStg() ~= "Lobby" then
@@ -2126,7 +2108,6 @@ Tabs.Gen:Toggle({
                 end
             end
 
-            -- ── startRiftCombat: HB ──────────────────────────────────
             local function startRiftCombat()
                 if Conns.rift then return end
                 Conns.rift = RunService.Heartbeat:Connect(function()
@@ -2159,9 +2140,6 @@ Tabs.Gen:Toggle({
                 end)
             end
 
-            -- ════════════════════════════════════════════════════════════
-            -- MAIN RIFT LOOP
-            -- ════════════════════════════════════════════════════════════
             while autoRiftRun do
                 if not getgenv().autoRift then break end
 
@@ -2173,11 +2151,9 @@ Tabs.Gen:Toggle({
                     continue
                 end
 
-                -- Double-confirm
                 task.wait(0.12)
                 if not riftExists() then task.wait(0.15); continue end
 
-                -- Set doRift + interrupt
                 if not getgenv().doRift then
                     getgenv().doRift    = true
                     summonPaused        = true
@@ -2194,7 +2170,6 @@ Tabs.Gen:Toggle({
                     if getgenv().doBoss then task.wait(0.5) end
                 end
 
-                -- TP ไป Reaper Society
                 if getStg() ~= "Reaper Society" then
                     local cancelRift = function()
                         return not autoRiftRun or not getgenv().autoRift
@@ -2208,7 +2183,6 @@ Tabs.Gen:Toggle({
                     lastHRPUp = 0; lastPartUp = 0
                 end
 
-                -- ตรวจ mob หลัง TP
                 lastTgtUp = 0
                 local hasMobs = riftHasLiveMobs()
                 if not hasMobs then
@@ -2216,7 +2190,6 @@ Tabs.Gen:Toggle({
                     hasMobs = riftHasLiveMobs()
                 end
 
-                -- มี mob → combat
                 if hasMobs then
                     riftEngaged = true
 
@@ -2234,7 +2207,6 @@ Tabs.Gen:Toggle({
 
                     startRiftCombat()
 
-                    -- Combat loop — poll 60ms
                     local combatDl = os.clock() + 300
                     while autoRiftRun and os.clock() < combatDl do
                         task.wait(0.06)
@@ -2253,11 +2225,9 @@ Tabs.Gen:Toggle({
                         end
                     end
 
-                    -- หยุด combat HB
                     if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
                     cRiftMob = nil; cRiftPart = nil
 
-                    -- ★ POST-COMBAT: รอ wave ใหม่ 8s
                     local waveFound = false
                     local postDl    = os.clock() + 8
                     while os.clock() < postDl and autoRiftRun do
@@ -2269,7 +2239,6 @@ Tabs.Gen:Toggle({
                         riftEngaged = false
                         task.wait(0.10); continue
                     else
-                        -- ★ มอนตายหมดแล้ว → ออกผ่าน Portal ทันที
                         if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
                         cRiftMob = nil; cRiftPart = nil
 
@@ -2287,7 +2256,6 @@ Tabs.Gen:Toggle({
                     end
 
                 else
-                    -- มี portal prompts (entering) → fire
                     local pList = getRiftPromptsWithPos()
                     if #pList > 0 then
                         riftEngaged = true
@@ -2331,9 +2299,8 @@ Tabs.Gen:Toggle({
                 end
 
                 task.wait(0.15)
-            end -- while autoRiftRun
+            end
 
-            -- cleanup เมื่อออก loop
             if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
             cRiftMob = nil; cRiftPart = nil
             if getgenv().doRift then
@@ -2352,7 +2319,7 @@ Tabs.Gen:Toggle({
 end -- end DPS/Rift block
 
 -- ==========================================
--- ABANDON VILLAGE  (FIXED v2 — PlayerGui.Gamemodes.BossFight.Visible)
+-- ABANDON VILLAGE
 -- ==========================================
 Tabs.Gen:Section({Title="Abandon Village"})
 
@@ -2366,14 +2333,12 @@ local function getBossMobInStage()
     return nil, nil
 end
 
--- ★ FIXED: ตรวจ UI จาก PlayerGui.Gamemodes.BossFight.Visible เป็นหลัก
 local function detectBossFightUI()
     local pg = lp:FindFirstChild("PlayerGui")
     if not pg then return false end
     local gm = pg:FindFirstChild("Gamemodes")
     if not gm then return false end
     local bf = gm:FindFirstChild("BossFight")
-    -- ★ เช็ค Visible == true เท่านั้น
     return bf ~= nil and bf.Visible == true
 end
 
@@ -2407,14 +2372,11 @@ local function waitCharReady(stageName, cancelFn, timeout, confirmNeeded)
     return false
 end
 
--- ★ FIXED: waitBossFightUI — รอ PlayerGui.Gamemodes.BossFight.Visible = true
--- ใช้ Signal-first (Changed) + poll backup 30ms
 local function waitBossFightUI(timeout, cancelFn)
     local dl      = os.clock() + timeout
     local found   = false
     local conn    = nil
 
-    -- ลอง wire signal ก่อน
     pcall(function()
         local pg = lp:FindFirstChild("PlayerGui")
         local gm = pg and pg:FindFirstChild("Gamemodes")
@@ -2423,7 +2385,6 @@ local function waitBossFightUI(timeout, cancelFn)
             conn = bf:GetPropertyChangedSignal("Visible"):Connect(function()
                 if bf.Visible then found = true end
             end)
-            -- เช็คทันทีกรณี UI เปิดอยู่แล้ว
             if bf.Visible then found = true end
         end
     end)
@@ -2500,9 +2461,6 @@ Tabs.Gen:Toggle({
                 summonPauseReason = "boss"
                 getgenv().doBoss  = true
 
-                -- ═══════════════════════════════════════════════════════
-                -- STEP 1: TP → Demon Forest
-                -- ═══════════════════════════════════════════════════════
                 sendDemonTP()
 
                 local ok = waitCharReady("Demon Forest", cancelBoss, 22, 3)
@@ -2512,10 +2470,6 @@ Tabs.Gen:Toggle({
                 task.wait(0.8)
                 if cancelBoss() then bossFail(); continue end
 
-                -- ═══════════════════════════════════════════════════════
-                -- STEP 2: TP ประตู + รอ BossFight UI (PlayerGui.Gamemodes.BossFight.Visible)
-                -- ★ FIXED: retry จนกว่า UI จะ Visible = true
-                -- ═══════════════════════════════════════════════════════
                 local MAX_RETRY = 8
                 local foundUI   = false
 
@@ -2523,7 +2477,6 @@ Tabs.Gen:Toggle({
                     if cancelBoss() then break end
                     if not isBossEventActive() then break end
 
-                    -- ตรวจก่อน TP ว่า UI เปิดอยู่แล้วไหม
                     if detectBossFightUI() then
                         foundUI = true; break
                     end
@@ -2532,17 +2485,14 @@ Tabs.Gen:Toggle({
                     local doorPart = entering and entering:FindFirstChild("Demon Forest")
 
                     if doorPart then
-                        -- TP ไปหาประตู
                         tpTarget(doorPart)
                         task.wait(0.5)
                         if cancelBoss() then break end
 
-                        -- ★ รอ BossFight UI ด้วย Signal + poll (5s)
                         if waitBossFightUI(5.0, cancelBoss) then
                             foundUI = true; break
                         end
 
-                        -- ไม่เจอ UI → reload Demon Forest แล้ว retry
                         if attempt < MAX_RETRY then
                             sendDemonTP()
                             local reloaded = waitCharReady("Demon Forest", cancelBoss, 18, 3)
@@ -2550,7 +2500,6 @@ Tabs.Gen:Toggle({
                             task.wait(1.2)
                         end
                     else
-                        -- รอ BossFight_Entering โหลด
                         local waitDl = os.clock() + 5.0
                         while os.clock() < waitDl and not cancelBoss() do
                             entering = Workspace:FindFirstChild("BossFight_Entering")
@@ -2558,7 +2507,6 @@ Tabs.Gen:Toggle({
                             task.wait(0.15)
                         end
                         if cancelBoss() then break end
-                        -- ถ้ายังไม่มี → reload
                         if not (entering and entering:FindFirstChild("Demon Forest")) then
                             sendDemonTP()
                             local reloaded = waitCharReady("Demon Forest", cancelBoss, 18, 3)
@@ -2572,9 +2520,6 @@ Tabs.Gen:Toggle({
                     bossFail(); task.wait(1.0); continue
                 end
 
-                -- ═══════════════════════════════════════════════════════
-                -- STEP 3: รอ boss mob spawn (max 12s)
-                -- ═══════════════════════════════════════════════════════
                 local cBoss, cBossPart = nil, nil
                 local spawnDl = os.clock() + 12
                 while os.clock() < spawnDl do
@@ -2591,9 +2536,6 @@ Tabs.Gen:Toggle({
                 if cBossPart then tpDirect(cBossPart, true, true) end
                 task.wait(0.2)
 
-                -- ═══════════════════════════════════════════════════════
-                -- STEP 4: Combat
-                -- ═══════════════════════════════════════════════════════
                 local fighting = true
                 clearBossConn()
                 Conns.boss = RunService.Heartbeat:Connect(function()
@@ -2664,7 +2606,7 @@ Tabs.Gen:Toggle({
 })
 
 -- ==========================================
--- AUTO RAID  (FIXED v2 — Faster Cycle + Precise Checks)
+-- AUTO RAID  (FIXED v3 — Triple confirm + session refresh)
 -- ==========================================
 Tabs.Gen:Section({Title="Raid System"})
 Tabs.Gen:Dropdown({Title="Raid Map", Flag="RaidMap",
@@ -2698,11 +2640,16 @@ local function getDoubleDungeonPad()
     return (sp and isPadAvailable(sp)) and sp or nil
 end
 
--- ★ FIXED: ใช้ Signal-first สำหรับ mob count
+-- ==========================================
+-- [FIX] countRaidMobs — force session refresh ก่อนนับทุกครั้งที่ forceRefresh=true
+-- แก้ปัญหา isRaidMob คืน false เพราะ getRaidSession() cache หมดอายุ
+-- ==========================================
 local raidMobCountCache, raidMobCountAt = 0, -1
 local function countRaidMobs(forceRefresh)
     local now=os.clock()
     if not forceRefresh and (now-raidMobCountAt)<0.03 then return raidMobCountCache end
+    -- [FIX] force refresh session ก่อนนับมอบเสมอ
+    if forceRefresh then forceSessionRefresh() end
     lastTgtUp=0
     local count=0
     for _,v in next,getSTgts() do
@@ -2923,7 +2870,6 @@ Tabs.Gen:Toggle({
                 end)
             end
 
-            -- ★ FIXED: tpToStage triple-confirm + char Y + health
             local function tpToStage(target)
                 lastStgUp=0
                 if getStg()==target then
@@ -2974,7 +2920,6 @@ Tabs.Gen:Toggle({
                 sessionJustCreated=false
             end
 
-            -- ★ NEW: Signal watch สำหรับ mob เพิ่ม
             local mobSignalConn=nil; local mobJustAppeared=false
             local function startMobWatch()
                 if mobSignalConn then return end
@@ -3108,7 +3053,6 @@ Tabs.Gen:Toggle({
                     end
                     getgenv().raidInP=true; summonPaused=true; summonPauseReason="raid"
                     lastTgtUp=0; mobJustAppeared=false
-                    -- ★ Signal-first + poll backup (10ms)
                     if mobJustAppeared or countRaidMobs(true)>0 then
                         mobJustAppeared=false; setRaidSt("FIGHTING")
                     else task.wait(0.01) end
@@ -3124,7 +3068,11 @@ Tabs.Gen:Toggle({
                     getgenv().raidInP=true; summonPaused=true; summonPauseReason="raid"
                     if not inCombat then startRaidCombat() end
 
-                    -- ★ FIGHTING inner loop: poll 15ms (เร็วกว่าเดิม)
+                    -- ==========================================
+                    -- [FIX] FIGHTING inner loop — triple confirm 0.3s x2
+                    -- ป้องกันออกก่อนมอนตายหมด เพราะ countRaidMobs
+                    -- อาจคืน 0 ชั่วคราวจาก session cache miss
+                    -- ==========================================
                     local fDl=os.clock()+300
                     while os.clock()<fDl and getgenv().autoRaid do
                         if getgenv().doRift then
@@ -3134,13 +3082,19 @@ Tabs.Gen:Toggle({
                             if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                             setRaidSt("IDLE"); break
                         end
-                        -- ★ ตรวจ mob ตายหมดด้วย poll เร็ว (force refresh)
+                        -- [FIX] force session refresh ก่อนนับ
+                        forceSessionRefresh()
                         raidMobCountAt = -1
                         if countRaidMobs(true)==0 then
-                            -- รอ 40ms confirm ป้องกัน false positive
-                            task.wait(0.04)
-                            raidMobCountAt = -1
-                            if countRaidMobs(true)==0 then break end
+                            -- confirm รอบที่ 1 (0.3s)
+                            task.wait(0.3)
+                            forceSessionRefresh(); raidMobCountAt = -1
+                            if countRaidMobs(true)==0 then
+                                -- confirm รอบที่ 2 (0.3s) — ถ้ายังเป็น 0 จริงๆ ค่อยออก
+                                task.wait(0.3)
+                                forceSessionRefresh(); raidMobCountAt = -1
+                                if countRaidMobs(true)==0 then break end
+                            end
                         end
                         task.wait(0.015)
                     end
@@ -3153,14 +3107,14 @@ Tabs.Gen:Toggle({
                 elseif st=="POST_FIGHT" then
                     if stateAge()>25 then abortRaid(); continue end
                     if raidYieldCheck() then abortRaid(); continue end
-                    -- ★ เช็คก่อนว่า mob กลับมาไหม
-                    raidMobCountAt = -1
+                    -- ตรวจก่อนว่า mob กลับมาไหม
+                    forceSessionRefresh(); raidMobCountAt = -1
                     if countRaidMobs(true)>0 then setRaidSt("FIGHTING"); continue end
                     inCombat=false; getgenv().raidInP=true
                     collectBoxes()
                     if not getgenv().autoRaid then break end
                     if raidYieldCheck() then abortRaid(); continue end
-                    raidMobCountAt = -1
+                    forceSessionRefresh(); raidMobCountAt = -1
                     if countRaidMobs(true)>0 then setRaidSt("FIGHTING"); continue end
                     exitRaid()
                     if raidYieldCheck() then abortRaid(); continue end
