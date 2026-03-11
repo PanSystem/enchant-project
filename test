@@ -1364,9 +1364,12 @@ local function makeFarmConn(getScanFn, flagName, directTp)
             if not cT.Parent or not isMobAlive(cT) then cT=nil; cP=nil
             else
                 if directTp then
-                    -- [FIX] snap ตรงไปมอนทุก frame ไม่เช็คระยะ
-                    killVelocity(hrp)
-                    hrp.CFrame = CFrame.new(cP.Position)
+                    -- วาปเฉพาะเมื่อห่างเกิน 4 stud (16 = 4²)
+                    local dv = hrp.Position - cP.Position
+                    if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 16 then
+                        killVelocity(hrp)
+                        hrp.CFrame = CFrame.new(cP.Position)
+                    end
                     reqAttack(cT)
                 else
                     local d=hrp.Position-cP.Position
@@ -1968,9 +1971,12 @@ Tabs.Gen:Toggle({
                     if not cRiftMob or not cRiftPart then return end
 
                     local hrp = getHRP(); if not hrp then return end
-                    -- [FIX] snap ตรงไปมอนเลย ทุก frame
-                    killVelocity(hrp)
-                    hrp.CFrame = CFrame.new(cRiftPart.Position)
+                    -- วาปเฉพาะเมื่อห่างเกิน 4 stud
+                    local dv = hrp.Position - cRiftPart.Position
+                    if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 16 then
+                        killVelocity(hrp)
+                        hrp.CFrame = CFrame.new(cRiftPart.Position)
+                    end
                     reqAttack(cRiftMob)
                 end)
             end
@@ -2425,9 +2431,13 @@ Tabs.Gen:Toggle({
                     end
                     if cBoss and cBossPart then
                         local hrp = getHRP(); if not hrp then return end
-                        -- [FIX] snap ตรงไปมอนเสมอ ไม่เช็คระยะ
-                        killVelocity(hrp)
-                        hrp.CFrame = CFrame.new(cBossPart.Position)
+                        -- วาปเฉพาะเมื่อห่างเกิน 4 stud
+                        local mPos = cBossPart.Position
+                        local dv   = hrp.Position - mPos
+                        if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 16 then
+                            killVelocity(hrp)
+                            hrp.CFrame = CFrame.new(mPos)
+                        end
                         reqAttack(cBoss)
                     end
                 end)
@@ -2722,8 +2732,12 @@ Tabs.Gen:Toggle({
                         local hrp=getHRP()
                         if hrp then
                             local mPos=cPart.Position
-                            killVelocity(hrp)
-                            hrp.CFrame=CFrame.new(mPos)
+                            -- วาปเฉพาะเมื่อห่างเกิน 4 stud
+                            local dv=hrp.Position-mPos
+                            if dv.X*dv.X+dv.Y*dv.Y+dv.Z*dv.Z > 16 then
+                                killVelocity(hrp)
+                                hrp.CFrame=CFrame.new(mPos)
+                            end
                             reqAttack(cTgt)
                         end
                     end
