@@ -1931,6 +1931,122 @@ local function riftHasLiveMobs()
     return false
 end
 
+-- ============================================================
+-- [RIFT v9] Rift World Model — Phase 1 (หาโมเดลก่อน)
+-- โมเดล Rift ที่ปรากฏใน Workspace/RaidsVisual ก่อน mob spawn
+-- ชื่อมักมี "Rift" อยู่ใน RaidsVisual หรือ Workspace โดยตรง
+-- ============================================================
+
+-- หาโมเดล Rift ที่มีอยู่ตอนนี้
+local function findRiftWorldModel()
+    -- 1. RaidsVisual → ลูก ที่มี "Rift" ในชื่อ
+    if RaidsVisual then
+        for _, v in next, RaidsVisual:GetChildren() do
+            local n = v.Name
+            if n:find("Rift", 1, true) then
+                return v
+            end
+        end
+    end
+    -- 2. Workspace โดยตรง (ไม่รวม folder ที่รู้จักอยู่แล้ว)
+    for _, v in next, Workspace:GetChildren() do
+        local n = v.Name
+        if n:find("Rift", 1, true)
+           and v ~= RaidsVisual
+           and v ~= RaidsEntering
+           and v ~= ServerTargets.Parent  -- WorldsFolder
+        then
+            return v
+        end
+    end
+    return nil
+end
+
+-- หา BasePart ของโมเดล Rift (สำหรับ TP ไปหา)
+local function getRiftWorldModelPart(model)
+    if not model or not model.Parent then return nil end
+    if model:IsA("BasePart") then return model end
+    if model:IsA("Model") then
+        local pp = model.PrimaryPart
+        if pp and pp.Parent then return pp end
+        local hrp = model:FindFirstChild("HumanoidRootPart")
+        if hrp and hrp.Parent then return hrp end
+        return model:FindFirstChildWhichIsA("BasePart", true)
+    end
+    -- Folder / other: scan descendants
+    return model:FindFirstChildWhichIsA("BasePart", true)
+end
+
+-- รอโมเดล Rift ปรากฏ — signal-based + poll fallback
+-- timeout: ถ้าไม่เจอใน timeout วินาที → return nil
+local function waitForRiftWorldModel(timeout, cancelFn)
+    -- ตรวจทันทีก่อน
+    local ex = findRiftWorldModel()
+    if ex and ex.Parent then return ex end
+
+    local found = nil
+    local conns = {}
+
+    pcall(function()
+        -- Watch RaidsVisual.ChildAdded
+        if RaidsVisual then
+            table.insert(conns, RaidsVisual.ChildAdded:Connect(function(child)
+                if not found and child.Name:find("Rift", 1, true) then
+                    found = child
+                end
+            end))
+        end
+        -- Watch Workspace.ChildAdded
+        table.insert(conns, Workspace.ChildAdded:Connect(function(child)
+            if found then return end
+            local n = child.Name
+            if n:find("Rift", 1, true)
+               and child ~= RaidsVisual
+               and child ~= RaidsEntering
+            then
+                found = child
+            end
+        end))
+    end)
+
+    local dl = os.clock() + (timeout or 30)
+    while not found and os.clock() < dl do
+        if cancelFn and cancelFn() then break end
+        -- Poll fallback ทุก 0.1s
+        local poll = findRiftWorldModel()
+        if poll and poll.Parent then found = poll; break end
+        task.wait(0.1)
+    end
+
+    for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    return found  -- nil ถ้าไม่เจอใน timeout
+end
+
+-- รอโมเดล Rift หายไป — AncestryChanged signal + poll fallback
+-- return true = หายแล้ว, false = timeout หรือ cancel
+local function waitForRiftModelGone(model, timeout, cancelFn)
+    if not model or not model.Parent then return true end  -- หายไปแล้ว
+
+    local gone = false
+    local conn  = nil
+    pcall(function()
+        conn = model.AncestryChanged:Connect(function(_, newParent)
+            if not newParent then gone = true end
+        end)
+    end)
+
+    local dl = os.clock() + (timeout or 60)
+    while not gone and os.clock() < dl do
+        if cancelFn and cancelFn() then break end
+        if not model.Parent then gone = true; break end
+        task.wait(0.08)
+    end
+
+    if conn then pcall(function() conn:Disconnect() end) end
+    return gone
+end
+
+-- ============================================================
 local function findRiftPortalEntry()
     if not RaidsVisual then return nil, nil end
     for _, f in next, RaidsVisual:GetChildren() do
@@ -2265,62 +2381,72 @@ Tabs.Gen:Toggle({
                     task.wait(0.3)
                 end
 
-                -- ── รอ Rift mob spawn ที่ Reaper Society (สูงสุด 30s) ──
-                -- [FIX] ใช้ ChildAdded signal + poll fallback
-                -- ถ้าไม่เจอใน 30s → ออกไปทำงานอื่น
-                local mobFound       = false
-                local mobSpawnSignal = false
-                local mobSpawnConn   = nil
+                -- ══════════════════════════════════════════════════════
+                -- [RIFT v9] 2-PHASE MODEL DETECTION
+                --
+                -- Phase 1: รอโมเดล Rift ปรากฏ (สูงสุด 30s)
+                --          ถ้าไม่เจอ → ออกไปทำงานอื่น
+                --
+                -- Phase 2: รอโมเดล Rift หายไป
+                --          พอหายแล้ว → หามอนแล้วตี
+                -- ══════════════════════════════════════════════════════
+                local cancelFn = function() return not autoRiftRun or not getgenv().autoRift end
 
-                pcall(function()
-                    mobSpawnConn = ServerTargets.ChildAdded:Connect(function(child)
-                        if child.Name:sub(1,5) == "Rifts" then
-                            mobSpawnSignal = true
-                        end
-                    end)
-                end)
+                -- ── Phase 1: รอโมเดล Rift ปรากฏ ────────────────────
+                local riftModel = waitForRiftWorldModel(30, cancelFn)
 
-                -- [FIX] ตรวจ tl ระหว่างรอ: ถ้า tl=0 แสดงว่า server reset
-                -- ยังคงรออยู่ต่อ (spawn อาจมาหลัง tl=0 ได้)
-                local mobWaitDl = os.clock() + 30  -- 30s timeout ตามที่ user ระบุ
-                while os.clock() < mobWaitDl and autoRiftRun do
-                    if not getgenv().autoRift then break end
-
-                    -- Force scan ทุก 0.15s
-                    lastTgtUp = 0
-                    if riftHasLiveMobs() then
-                        mobFound = true; break
-                    end
-                    if mobSpawnSignal then
-                        -- signal fired → confirm ว่ามีจริง
-                        task.wait(0.1); lastTgtUp = 0
-                        if riftHasLiveMobs() then
-                            mobFound = true; break
-                        end
-                        mobSpawnSignal = false
-                    end
-                    task.wait(0.15)
-                end
-
-                if mobSpawnConn then
-                    pcall(function() mobSpawnConn:Disconnect() end)
-                    mobSpawnConn = nil
-                end
-
-                -- [FIX] ถ้าไม่เจอมอนใน 30s → ออกจาก RS ไปทำงานอื่น
-                if not mobFound or not autoRiftRun then
+                if not riftModel or not autoRiftRun or not getgenv().autoRift then
+                    -- ไม่เจอโมเดลใน 30s → ถอย
                     inRift = false; getgenv().doRift = false
                     lastRiftEnd = os.clock()
                     if summonPaused and summonPauseReason=="rift" then
                         summonPaused=false; summonPauseReason=nil
                     end
-                    -- TP กลับ Lobby
                     tpToLobbyConfirmed()
                     task.wait(2.0); continue
                 end
 
-                -- ── COMBAT PHASE v8 ──────────────────────────────────
-                -- Snap ตรงไปมอนทันที + re-equip ถ้า dpsActive
+                -- เจอโมเดลแล้ว → snap ไปหาก่อนเพื่อรอใกล้ๆ
+                do
+                    local rPart = getRiftWorldModelPart(riftModel)
+                    local hrpNow = getHRP()
+                    if rPart and hrpNow then
+                        killVelocity(hrpNow)
+                        hrpNow.CFrame = CFrame.new(rPart.Position)
+                    end
+                end
+
+                -- ── Phase 2: รอโมเดล Rift หายไป ────────────────────
+                -- timeout 120s กัน hang ตลอดกาล
+                local modelGone = waitForRiftModelGone(riftModel, 120, cancelFn)
+
+                if not autoRiftRun or not getgenv().autoRift then
+                    stopRiftCombat()
+                    doExitRift()
+                    continue
+                end
+
+                -- โมเดลหายแล้ว (หรือ timeout) → flush cache + หามอน
+                flushCaches()
+                task.wait(0.2)  -- รอ server spawn mob สักครู่
+
+                -- ── COMBAT PHASE v9 ──────────────────────────────────
+                -- หามอน Rifts ใน ServerTargets (รอสูงสุด 15s หลังโมเดลหาย)
+                local mobFound = false
+                local mobWaitDl = os.clock() + 15
+                while os.clock() < mobWaitDl and autoRiftRun do
+                    if riftHasLiveMobs() then mobFound = true; break end
+                    task.wait(0.1)
+                end
+
+                if not mobFound then
+                    -- ไม่มีมอนเลย → exit
+                    stopRiftCombat()
+                    doExitRift()
+                    continue
+                end
+
+                -- Snap ตรงไปมอนทันที + fire initial attack
                 local initMob, initPart = findNearestRiftMob()
                 if initPart then
                     local hrpNow = getHRP()
@@ -2339,14 +2465,14 @@ Tabs.Gen:Toggle({
 
                 startRiftCombat()
 
-                -- รอมอนหมด
+                -- รอมอนหมด (confirm 4 ครั้ง ~0.4s ก่อน break)
                 local combatDl   = os.clock() + 300
                 local _noMobTick = 0
                 while autoRiftRun and os.clock() < combatDl do
                     task.wait(0.10)
                     if not riftHasLiveMobs() then
                         _noMobTick = _noMobTick + 1
-                        if _noMobTick >= 4 then break end  -- confirm 4 ครั้ง (~0.4s)
+                        if _noMobTick >= 4 then break end
                     else
                         _noMobTick = 0
                     end
