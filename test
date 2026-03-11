@@ -581,8 +581,8 @@ local riftLastSeen         = 0
 local RIFT_GRACE_TIME      = 3.0
 local riftTextLatch        = false
 local riftTextHitCount     = 0
-local riftCooldownUntil    = 0        -- cooldown หลัง rift จบ
-local RIFT_POST_COOLDOWN   = 12.0    -- วินาที
+local riftCooldownUntil    = 0
+local RIFT_POST_COOLDOWN   = 12.0
 
 local SGUI_SKIP = {"hub","wind","exploit","synapse","kiriot","sentinel",
                    "krnl","fluxus","script","executor","delta"}
@@ -646,7 +646,6 @@ local function resetRiftDetection()
     riftLastSeen     = 0
     rftActive        = false
     lastRftUp        = 0
-    -- [FIX] cooldown 12s หลัง rift จบ ป้องกัน re-trigger จาก leftover data
     riftCooldownUntil = os.clock() + RIFT_POST_COOLDOWN
 end
 
@@ -1428,11 +1427,6 @@ Tabs.Gen:Toggle({
     end
 })
 
--- ==========================================
--- [FIX] makeFarmConn — directTp parameter
---   directTp=false (Auto Nearest): เช็คระยะ ATK_D_SQ เท่านั้น ไม่ TP
---   directTp=true  (Auto Selected & others): TP ตรงไปที่มอนทันที
--- ==========================================
 local function makeFarmConn(getScanFn, flagName, directTp)
     local cT,cP=nil,nil; local lastScan=0
     return RunService.Heartbeat:Connect(function()
@@ -1448,14 +1442,12 @@ local function makeFarmConn(getScanFn, flagName, directTp)
                 local d=hrp.Position-cP.Position
                 local dsq=d.X*d.X+d.Y*d.Y+d.Z*d.Z
                 if directTp then
-                    -- TP ตรงไปหามอนเลย
                     if dsq > Const.SNAP_D_SQ then
                         killVelocity(hrp)
                         hrp.CFrame = CFrame.new(cP.Position)
                     end
                     reqAttack(cT)
                 else
-                    -- Auto Nearest: เช็คระยะเท่านั้น ถ้าไกลเกินให้หามอนใหม่
                     if dsq > Const.ATK_D_SQ then
                         cT=nil; cP=nil; return
                     end
@@ -1470,7 +1462,6 @@ local function makeFarmConn(getScanFn, flagName, directTp)
     end)
 end
 
--- Auto Nearest: directTp=false → เช็คมอนในระยะ ATK_D_SQ เท่านั้น ไม่ TP
 Tabs.Gen:Toggle({
     Title="Auto Attack Nearest", Flag="AutoNearest", Value=false,
     Callback=function(state)
@@ -1496,7 +1487,6 @@ Tabs.Gen:Toggle({
     end
 })
 
--- Auto Selected: directTp=true → TP ตรงไปที่มอนเลย
 Tabs.Gen:Toggle({
     Title="Auto Attack Selected", Flag="AutoSelected", Value=false,
     Callback=function(state)
@@ -1557,7 +1547,8 @@ Tabs.Pre:Input({
     end
 })
 
-local DS = {
+-- [FIX] ใช้ inner DS แยกต่างหาก ไม่ shadow outer DS
+local DS2 = {
     hb=nil, aaConn=nil, aaHB=nil, lastAA=0,
     conns={}, desc={}, folder={},
     debs={}, unitCount=0,
@@ -1566,15 +1557,17 @@ local DS = {
     scanFn=nil, mob=nil, part=nil,
     scanTick=0, chkTick=0,
 }
+-- [FIX] sync outer DS ให้ชี้ไปที่ DS2 เพื่อให้ scanFn ทำงานถูกต้อง
+DS = DS2
 
 local function getAABool() return MyData:FindFirstChild("Auto_Attacks") end
 local function isAAOn()    local v=getAABool(); return v~=nil and v.Value==true end
-local function doAAOn()    R.Byte:FireServer(AA_ON); DS.lastAA=os.clock() end
+local function doAAOn()    R.Byte:FireServer(AA_ON); DS2.lastAA=os.clock() end
 local function doAAOff()   R.Byte:FireServer(AA_OFF) end
 
 local function wireAA(av)
-    if DS.aaConn then pcall(function() DS.aaConn:Disconnect() end) end
-    DS.aaConn = av:GetPropertyChangedSignal("Value"):Connect(function()
+    if DS2.aaConn then pcall(function() DS2.aaConn:Disconnect() end) end
+    DS2.aaConn = av:GetPropertyChangedSignal("Value"):Connect(function()
         if not dpsActive or av.Value then return end
         if dpsActive and not isAAOn() then doAAOn() end
     end)
@@ -1594,23 +1587,23 @@ local function startAAKeepalive()
             end
         end)
     end
-    DS.aaHB = RunService.Heartbeat:Connect(function()
+    DS2.aaHB = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
         local now = os.clock()
-        if now - DS.lastAA < 0.5 then return end
-        if not isAAOn() then doAAOn() else DS.lastAA = now end
+        if now - DS2.lastAA < 0.5 then return end
+        if not isAAOn() then doAAOn() else DS2.lastAA = now end
     end)
 end
 
 local function stopAAKeepalive()
-    if DS.aaConn then pcall(function() DS.aaConn:Disconnect() end); DS.aaConn=nil end
-    if DS.aaHB   then pcall(function() DS.aaHB:Disconnect()   end); DS.aaHB=nil   end
+    if DS2.aaConn then pcall(function() DS2.aaConn:Disconnect() end); DS2.aaConn=nil end
+    if DS2.aaHB   then pcall(function() DS2.aaHB:Disconnect()   end); DS2.aaHB=nil   end
     doAAOff()
 end
 
 local function allUnitsHit()
-    if DS.unitCount == 0 then return false end
-    for _, deb in next, DS.debs do
+    if DS2.unitCount == 0 then return false end
+    for _, deb in next, DS2.debs do
         if not deb.Value then return false end
     end
     return true
@@ -1620,8 +1613,8 @@ local DPS_REQ_RATE_HB = 0.015
 local SNAP_SQ         = Const.SNAP_D_SQ
 
 local function startMasterHB()
-    if DS.hb then DS.hb:Disconnect() end
-    DS.hb = RunService.Heartbeat:Connect(function()
+    if DS2.hb then DS2.hb:Disconnect() end
+    DS2.hb = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
         local now = os.clock()
 
@@ -1632,67 +1625,67 @@ local function startMasterHB()
             _lastClk = now; R.Byte:FireServer(unpack(clickArgs))
         end
 
-        local st = DS.eqState
+        local st = DS2.eqState
 
         if st == 0 then
             if now < safeBoostUntil then return end
 
-            local hit = DS.allHitFlag
-                     or (DS.unitCount > 0 and allUnitsHit())
-                     or (DS.unitCount == 0 and now >= DS.eqNext)
+            local hit = DS2.allHitFlag
+                     or (DS2.unitCount > 0 and allUnitsHit())
+                     or (DS2.unitCount == 0 and now >= DS2.eqNext)
 
             if hit then
-                DS.allHitFlag = false
+                DS2.allHitFlag = false
 
                 if getgenv().safeBoostActive then
                     local dpsObj = lp:FindFirstChild("DPS")
                     if dpsObj and dpsObj.Value >= safeDMGLimit then
                         safeBoostUntil = now + 5.0
-                        DS.eqState     = 0
-                        DS.allHitFlag  = false
+                        DS2.eqState     = 0
+                        DS2.allHitFlag  = false
                         return
                     end
                 end
 
-                DS.eqState = 1
-                DS.eqNext  = now + dpsInputDelay
+                DS2.eqState = 1
+                DS2.eqNext  = now + dpsInputDelay
             end
 
         elseif st == 1 then
-            if now >= DS.eqNext then
+            if now >= DS2.eqNext then
                 R.Byte:FireServer(DPS_EQ)
-                DS.eqState = 0
-                DS.eqNext  = now
+                DS2.eqState = 0
+                DS2.eqNext  = now
             end
         end
 
-        if not DS.scanFn then return end
+        if not DS2.scanFn then return end
 
-        DS.chkTick = DS.chkTick + 1
-        if DS.chkTick % 3 == 0 then
-            if DS.mob and (not DS.mob.Parent or not isMobAlive(DS.mob)) then
-                DS.mob=nil; DS.part=nil
+        DS2.chkTick = DS2.chkTick + 1
+        if DS2.chkTick % 3 == 0 then
+            if DS2.mob and (not DS2.mob.Parent or not isMobAlive(DS2.mob)) then
+                DS2.mob=nil; DS2.part=nil
             end
         end
-        DS.scanTick = DS.scanTick + 1
-        if not DS.mob and DS.scanTick % 4 == 0 then
-            DS.mob, DS.part = DS.scanFn()
+        DS2.scanTick = DS2.scanTick + 1
+        if not DS2.mob and DS2.scanTick % 4 == 0 then
+            DS2.mob, DS2.part = DS2.scanFn()
         end
-        if not DS.mob or not DS.part then return end
+        if not DS2.mob or not DS2.part then return end
 
         local hrp = getHRP(); if not hrp then return end
-        local mPos = DS.part.Position
+        local mPos = DS2.part.Position
         local dv   = hrp.Position - mPos
         if dv.X*dv.X + dv.Z*dv.Z > SNAP_SQ then
             hrp.CFrame = CFrame.new(mPos)
         end
 
-        local last = pendingRequests[DS.mob]
+        local last = pendingRequests[DS2.mob]
         if not last or (now - last >= DPS_REQ_RATE_HB) then
-            local mn = mobNameCache[DS.mob]
-            if not mn then mn = getValidMobName(DS.mob) end
+            local mn = mobNameCache[DS2.mob]
+            if not mn then mn = getValidMobName(DS2.mob) end
             if type(mn) == "string" and mn ~= "" and mn ~= "nil" then
-                R.Req:FireServer(mn, "Mouse"); pendingRequests[DS.mob] = now
+                R.Req:FireServer(mn, "Mouse"); pendingRequests[DS2.mob] = now
             end
         end
     end)
@@ -1702,10 +1695,10 @@ local _autoFireHB = nil
 local function startAutoFire()
     if _autoFireHB then return end
     _autoFireHB = RunService.Heartbeat:Connect(function()
-        if not dpsActive or DS.unitCount > 0 then return end
-        if DS.eqState == 0 then
+        if not dpsActive or DS2.unitCount > 0 then return end
+        if DS2.eqState == 0 then
             local interval = dpsInputDelay * 2.0 + 0.016
-            if os.clock() - DS.eqNext > interval then DS.eqNext = 0 end
+            if os.clock() - DS2.eqNext > interval then DS2.eqNext = 0 end
         end
     end)
 end
@@ -1725,7 +1718,7 @@ end
 
 local function wireUnit(unitInst)
     local uName = unitInst.Name
-    if DS.debs[uName] then return end
+    if DS2.debs[uName] then return end
 
     local deb = findDebounce(unitInst)
     if not deb then
@@ -1733,25 +1726,25 @@ local function wireUnit(unitInst)
         dc = unitInst.DescendantAdded:Connect(function(v)
             if v.Name == "Debounce" and v:IsA("BoolValue") then
                 pcall(function() dc:Disconnect() end)
-                DS.desc[uName] = nil
-                if dpsActive and not DS.debs[uName] then wireUnit(unitInst) end
+                DS2.desc[uName] = nil
+                if dpsActive and not DS2.debs[uName] then wireUnit(unitInst) end
             end
         end)
-        DS.desc[uName] = dc
+        DS2.desc[uName] = dc
         return
     end
 
-    DS.debs[uName]  = deb
-    DS.unitCount    = DS.unitCount + 1
+    DS2.debs[uName]  = deb
+    DS2.unitCount    = DS2.unitCount + 1
 
     local prev = deb.Value
-    DS.conns[uName] = deb:GetPropertyChangedSignal("Value"):Connect(function()
+    DS2.conns[uName] = deb:GetPropertyChangedSignal("Value"):Connect(function()
         if not dpsActive then return end
         local cur = deb.Value
 
         if cur and not prev then
-            if DS.eqState == 0 and allUnitsHit() then
-                DS.allHitFlag = true
+            if DS2.eqState == 0 and allUnitsHit() then
+                DS2.allHitFlag = true
             end
         end
 
@@ -1760,27 +1753,29 @@ local function wireUnit(unitInst)
 end
 
 local function unwireUnit(uName)
-    local c = DS.conns[uName]; if c then pcall(function() c:Disconnect() end); DS.conns[uName]=nil end
-    local d = DS.desc[uName];  if d then pcall(function() d:Disconnect() end); DS.desc[uName]=nil end
-    if DS.debs[uName] then DS.debs[uName]=nil; DS.unitCount=math.max(0,DS.unitCount-1) end
+    local c = DS2.conns[uName]; if c then pcall(function() c:Disconnect() end); DS2.conns[uName]=nil end
+    local d = DS2.desc[uName];  if d then pcall(function() d:Disconnect() end); DS2.desc[uName]=nil end
+    if DS2.debs[uName] then DS2.debs[uName]=nil; DS2.unitCount=math.max(0,DS2.unitCount-1) end
 end
 
+-- [FIX] dpsCleanup ที่แก้ไข: set dpsActive=false ก่อนเสมอ
+-- เพื่อหยุด spawn loop ที่อาจยังรันอยู่
 local function dpsCleanup_impl()
-    dpsActive = false
-    DS.eqState=0; DS.eqNext=0; DS.allHitFlag=false
-    DS.mob=nil; DS.part=nil; DS.scanFn=nil
-    DS.debs={}; DS.unitCount=0
+    dpsActive = false  -- [FIX] ตั้งก่อนทุกอย่าง ตัด spawn ที่ค้างอยู่
+    DS2.eqState=0; DS2.eqNext=0; DS2.allHitFlag=false
+    DS2.mob=nil; DS2.part=nil; DS2.scanFn=nil
+    DS2.debs={}; DS2.unitCount=0
     safeBoostUntil = 0
 
     pcall(function() R.Byte:FireServer(DPS_EQ) end)
 
     stopAutoFire()
-    if DS.hb then pcall(function() DS.hb:Disconnect() end); DS.hb=nil end
+    if DS2.hb then pcall(function() DS2.hb:Disconnect() end); DS2.hb=nil end
     stopAAKeepalive()
-    for _,c in next, DS.conns  do pcall(function() c:Disconnect() end) end
-    for _,c in next, DS.desc   do pcall(function() c:Disconnect() end) end
-    for _,c in next, DS.folder do pcall(function() c:Disconnect() end) end
-    DS.conns={}; DS.desc={}; DS.folder={}
+    for _,c in next, DS2.conns  do pcall(function() c:Disconnect() end) end
+    for _,c in next, DS2.desc   do pcall(function() c:Disconnect() end) end
+    for _,c in next, DS2.folder do pcall(function() c:Disconnect() end) end
+    DS2.conns={}; DS2.desc={}; DS2.folder={}
     stopDPSPrecision()
 end
 dpsCleanup = dpsCleanup_impl
@@ -1794,8 +1789,8 @@ Tabs.Pre:Toggle({
         if not state then dpsCleanup(); return end
 
         dpsActive = true
-        DS.eqState=0; DS.eqNext=0; DS.allHitFlag=false
-        DS.debs={}; DS.unitCount=0
+        DS2.eqState=0; DS2.eqNext=0; DS2.allHitFlag=false
+        DS2.debs={}; DS2.unitCount=0
         safeBoostUntil = 0
 
         R.Byte:FireServer(DPS_EQ)
@@ -1804,31 +1799,54 @@ Tabs.Pre:Toggle({
         startAutoFire()
 
         task.spawn(function()
+            -- [FIX] เช็ค dpsActive ทุก step ป้องกัน zombie connections
+            if not dpsActive then return end
+
             local unitsRoot = WorldsFolder:FindFirstChild("Units")
                            or WorldsFolder:WaitForChild("Units", 10)
             if not unitsRoot or not dpsActive then dpsCleanup(); return end
+
             local srvRoot = unitsRoot:FindFirstChild("Server")
                          or unitsRoot:WaitForChild("Server", 10)
             if not srvRoot or not dpsActive then dpsCleanup(); return end
+
             local plrFolder = srvRoot:FindFirstChild(myName)
                            or srvRoot:WaitForChild(myName, 15)
             if not plrFolder or not dpsActive then dpsCleanup(); return end
 
+            -- [FIX] ตรวจอีกครั้งหลัง WaitForChild เสร็จ
+            if not dpsActive then return end
+
             unitServerFolder = plrFolder
             for _, u in next, plrFolder:GetChildren() do
-                if dpsActive then wireUnit(u) end
+                if not dpsActive then return end  -- [FIX] stop mid-loop ถ้า cleanup แล้ว
+                wireUnit(u)
             end
-            table.insert(DS.folder, plrFolder.ChildAdded:Connect(function(u)
+
+            -- [FIX] เช็ค dpsActive ก่อนสร้าง folder connections
+            if not dpsActive then return end
+
+            local connAdded = plrFolder.ChildAdded:Connect(function(u)
                 if dpsActive then wireUnit(u) end
-            end))
-            table.insert(DS.folder, plrFolder.ChildRemoved:Connect(function(u)
+            end)
+            local connRemoved = plrFolder.ChildRemoved:Connect(function(u)
                 unwireUnit(u.Name)
-            end))
+            end)
+
+            -- [FIX] ถ้า cleanup เกิดขึ้นระหว่างสร้าง connections → ทำลายทันที
+            if not dpsActive then
+                pcall(function() connAdded:Disconnect() end)
+                pcall(function() connRemoved:Disconnect() end)
+                return
+            end
+
+            table.insert(DS2.folder, connAdded)
+            table.insert(DS2.folder, connRemoved)
 
             if getgenv().autoNearest then
-                DS.scanFn = function() return getNearestMobUniversal(math.huge) end
+                DS2.scanFn = function() return getNearestMobUniversal(math.huge) end
             elseif getgenv().autoSel then
-                DS.scanFn = function() return findSelectedMob() end
+                DS2.scanFn = function() return findSelectedMob() end
             end
         end)
     end
@@ -1850,14 +1868,14 @@ Tabs.Pre:Toggle({
 })
 
 -- ==========================================
--- AUTO RIFT  (FIXED v3 — Portal Exit via Raids_Visual)
+-- AUTO RIFT (FIXED v4 — Always snap to mob + aggressive cache reset)
 -- ==========================================
 Tabs.Gen:Section({Title="Auto Rift"})
 
 local function findNearestRiftMob()
     local hrp=getHRP(); if not hrp then return nil,nil end
     local hPos=hrp.Position; local bestMob,bestPart,bestDistSq=nil,nil,math.huge
-    lastTgtUp = 0
+    lastTgtUp = 0  -- force refresh every time
     for _,m in next,getSTgts() do
         if m.Name:sub(1,5)=="Rifts" and isMobAlive(m) then
             local pt=m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
@@ -1887,12 +1905,6 @@ local function riftHasLiveMobs()
     return false
 end
 
--- ==========================================
--- [FIX] RIFT DETECTION — Ultra Strict v4
--- ==========================================
-
--- riftHasPortal: เช็คว่ามี ProximityPrompt จริงๆ ใน SpawnedRifts
--- (portal ที่ยังไม่ได้เข้า หรือ portal ออก)
 local function riftHasPortal()
     local function scanForPrompt(folder)
         if not folder or not folder.Parent then return false end
@@ -1900,7 +1912,6 @@ local function riftHasPortal()
             for _, v in ipairs(child:GetDescendants()) do
                 if v:IsA("ProximityPrompt") and v.Enabled then return true end
             end
-            -- ตรวจ child เองด้วย
             for _, v in ipairs(child:GetChildren()) do
                 if v:IsA("ProximityPrompt") and v.Enabled then return true end
             end
@@ -1918,7 +1929,6 @@ local function riftHasPortal()
     return false
 end
 
--- riftContainerExists: ใช้แค่ backup หลัง TP เท่านั้น (ไม่ใช้ trigger)
 local function riftContainerExists()
     local maps = Workspace:FindFirstChild("Maps")
     local rs   = maps and maps:FindFirstChild("Reaper Society")
@@ -1931,16 +1941,13 @@ local function riftContainerExists()
     return false
 end
 
--- riftExistsStrict: trigger TP เฉพาะเมื่อมี mob หรือ portal จริงๆ
--- ไม่นับ container เปล่า / text notification
 local function riftExistsStrict()
-    if os.clock() < riftCooldownUntil then return false end  -- cooldown หลัง rift จบ
+    if os.clock() < riftCooldownUntil then return false end
     if riftHasLiveMobs() then return true end
     if riftHasPortal()   then return true end
     return false
 end
 
--- riftExists: ใช้ post-TP verify เท่านั้น (กว้างกว่า strict)
 local function riftExists()
     if os.clock() < riftCooldownUntil then return false end
     if riftHasLiveMobs()     then return true end
@@ -2121,9 +2128,9 @@ Tabs.Gen:Toggle({
             if summonPaused and summonPauseReason=="rift" then summonPaused=false; summonPauseReason=nil end
             return
         end
-        riftCooldownUntil = 0  -- clear cooldown เมื่อ enable ใหม่
+        riftCooldownUntil = 0
         task.spawn(function()
-            local LEASH_SQ    = 5 * 5
+            -- [FIX] RIFT_LEASH_SQ ไม่ใช้แล้ว เพราะ startRiftCombat จะ snap ตรงๆ เสมอ
             local cRiftMob    = nil
             local cRiftPart   = nil
             local riftEngaged = false
@@ -2154,51 +2161,46 @@ Tabs.Gen:Toggle({
                 end
             end
 
+            -- ==========================================
+            -- [FIX] startRiftCombat — snap ตรงไปมอนเสมอ ไม่เช็ค LEASH
+            -- force reset cache ทุกครั้งที่หามอนใหม่
+            -- ==========================================
             local function startRiftCombat()
                 if Conns.rift then return end
                 Conns.rift = RunService.Heartbeat:Connect(function()
                     if not autoRiftRun or not getgenv().autoRift then return end
                     sendAtk(); sendClk()
 
+                    -- ทำความสะอาด cRiftMob ที่ตายไปแล้ว
                     if cRiftMob and (not cRiftMob.Parent or not isMobAlive(cRiftMob)) then
                         cRiftMob = nil; cRiftPart = nil
+                        lastTgtUp = 0  -- [FIX] force refresh ทันทีเมื่อมอนหาย
                     end
+
+                    -- ค้นหามอน rift ที่ใกล้ที่สุด (lastTgtUp=0 อยู่ใน findNearestRiftMob แล้ว)
                     if not cRiftMob then
                         cRiftMob, cRiftPart = findNearestRiftMob()
                     end
                     if not cRiftMob or not cRiftPart then return end
 
                     local hrp = getHRP(); if not hrp then return end
-                    local mPos = cRiftPart.Position
-                    local diff = hrp.Position - mPos
-                    local dsq  = diff.X*diff.X + diff.Y*diff.Y + diff.Z*diff.Z
-
-                    if dpsActive then
-                        hrp.CFrame = CFrame.new(mPos)
-                        reqAttack(cRiftMob)
-                    else
-                        if dsq > LEASH_SQ then
-                            killVelocity(hrp)
-                            hrp.CFrame = CFrame.new(mPos + Vector3.new(0, 2, 0))
-                        end
-                        reqAttack(cRiftMob)
-                    end
+                    -- [FIX] snap ตรงไปที่มอนเลย ไม่เช็ค LEASH_SQ
+                    -- เหมือน Raid combat ที่ทำงานได้แน่นอน
+                    killVelocity(hrp)
+                    hrp.CFrame = CFrame.new(cRiftPart.Position)
+                    reqAttack(cRiftMob)
                 end)
             end
 
-            -- [FIX] rift confirm counter — ต้อง 5 consecutive positives × 0.3s = 1.5s
-            -- ก่อนถือว่า rift เกิดจริงและ TP ไป
             local riftConfirmCount = 0
             local RIFT_NEED_CONFIRM = 5
 
             while autoRiftRun do
                 if not getgenv().autoRift then break end
 
-                -- ── Cooldown guard ──────────────────────────────────────
                 if os.clock() < riftCooldownUntil then
                     riftConfirmCount = 0
                     if riftEngaged or getgenv().doRift then
-                        -- อยู่ใน rift แต่ cooldown running = rift จบแล้ว endRift
                         if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
                         cRiftMob = nil; cRiftPart = nil; riftEngaged = false
                         getgenv().doRift = false
@@ -2209,7 +2211,6 @@ Tabs.Gen:Toggle({
                     task.wait(0.5); continue
                 end
 
-                -- ── ตรวจ physical evidence (STRICT) ────────────────────
                 local strictOk = riftExistsStrict()
 
                 if not strictOk then
@@ -2219,13 +2220,11 @@ Tabs.Gen:Toggle({
                     continue
                 end
 
-                -- ── Accumulate consecutive confirms ─────────────────────
                 riftConfirmCount = riftConfirmCount + 1
                 if riftConfirmCount < RIFT_NEED_CONFIRM then
-                    task.wait(0.3)   -- รอแล้ว re-check ในรอบหน้า
+                    task.wait(0.3)
                     continue
                 end
-                -- ผ่าน 5 confirms แล้ว → rift เกิดจริงๆ
                 riftConfirmCount = 0
 
                 if not getgenv().doRift then
@@ -2233,7 +2232,6 @@ Tabs.Gen:Toggle({
                     summonPaused        = true
                     summonPauseReason   = "rift"
 
-                    -- [PRIORITY] Rift > Raid: ออกจาก Raid ทันที
                     if getgenv().raidInP then
                         local rDl = os.clock() + 5.0
                         while getgenv().raidInP and os.clock() < rDl do task.wait(0.06) end
@@ -2242,13 +2240,10 @@ Tabs.Gen:Toggle({
                             task.wait(0.3); getgenv().raidInP = false
                         end
                     end
-                    -- [PRIORITY] Rift > Boss: บอก boss ให้หยุด
                     if getgenv().doBoss then task.wait(0.8) end
                 end
 
-                -- ── TP ไป Reaper Society ────────────────────────────────
                 if getStg() ~= "Reaper Society" then
-                    -- ก่อน TP ต้อง re-confirm อีกครั้ง (ป้องกัน rift จบระหว่างรอ)
                     if not riftExistsStrict() then
                         getgenv().doRift = false
                         resetRiftDetection(); riftEngaged = false
@@ -2269,16 +2264,24 @@ Tabs.Gen:Toggle({
                         end
                         task.wait(1.5); continue
                     end
-                    task.wait(0.4)
-                    lastHRPUp = 0; lastPartUp = 0
+                    -- [FIX] reset caches ทั้งหมดหลัง TP สำเร็จ
+                    -- ให้ getSTgts / getHRP / getParts ดึงข้อมูลใหม่
+                    task.wait(0.5)
+                    lastTgtUp  = 0
+                    lastHRPUp  = 0
+                    lastPartUp = 0
+                    -- [FIX] ล้าง mob cache เก่าเพื่อไม่ให้ค้างจาก stage อื่น
+                    for k in next, mobHumCache     do mobHumCache[k]     = nil end
+                    for k in next, mobNameCache    do mobNameCache[k]    = nil end
+                    for k in next, mobDisplayCache do mobDisplayCache[k] = nil end
                 end
 
-                -- ── หลัง TP: verify ว่า rift ยังอยู่จริง (max 6s) ────────
-                -- ถ้าไม่เจอ evidence → false alarm, กลับ Lobby
+                -- verify ว่า rift ยังอยู่จริง (max 6s)
                 local verifyDl = os.clock() + 6.0
                 local verified = false
                 while os.clock() < verifyDl and autoRiftRun do
-                    task.wait(0.3); lastTgtUp = 0
+                    task.wait(0.2)
+                    lastTgtUp = 0
                     if riftHasLiveMobs() then verified = true; break end
                     if riftHasPortal()   then verified = true; break end
                 end
@@ -2298,22 +2301,21 @@ Tabs.Gen:Toggle({
                 lastTgtUp = 0
                 local hasMobs = riftHasLiveMobs()
                 if not hasMobs then
-                    task.wait(0.50); lastTgtUp = 0
+                    task.wait(0.40); lastTgtUp = 0
                     hasMobs = riftHasLiveMobs()
                 end
 
                 if hasMobs then
                     riftEngaged = true
 
-                    local hrpNow = getHRP()
-                    if hrpNow then
-                        local nearMob, nearPart = findNearestRiftMob()
-                        if nearPart then
-                            local dv = hrpNow.Position - nearPart.Position
-                            if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > LEASH_SQ then
-                                killVelocity(hrpNow)
-                                hrpNow.CFrame = CFrame.new(nearPart.Position + Vector3.new(0,2,0))
-                            end
+                    -- [FIX] TP ไปหามอนก่อน start combat
+                    local nearMob, nearPart = findNearestRiftMob()
+                    if nearPart then
+                        local hrpNow = getHRP()
+                        if hrpNow then
+                            killVelocity(hrpNow)
+                            hrpNow.CFrame = CFrame.new(nearPart.Position)
+                            task.wait(0.05)
                         end
                     end
 
@@ -2325,20 +2327,8 @@ Tabs.Gen:Toggle({
                         task.wait(0.06)
                         lastTgtUp = 0
                         if not riftHasLiveMobs() then
-                            -- Confirm mob ตายจริง (2 รอบ)
                             task.wait(0.3); lastTgtUp = 0
                             if not riftHasLiveMobs() then break end
-                        end
-
-                        if cRiftPart then
-                            local hrp2 = getHRP()
-                            if hrp2 then
-                                local dv = hrp2.Position - cRiftPart.Position
-                                if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > LEASH_SQ then
-                                    killVelocity(hrp2)
-                                    hrp2.CFrame = CFrame.new(cRiftPart.Position + Vector3.new(0,2,0))
-                                end
-                            end
                         end
                     end
 
@@ -2385,12 +2375,9 @@ Tabs.Gen:Toggle({
                             if pos then
                                 local hrpNow = getHRP()
                                 if hrpNow then
-                                    local dv = hrpNow.Position - pos
-                                    if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > LEASH_SQ then
-                                        killVelocity(hrpNow)
-                                        hrpNow.CFrame = CFrame.new(pos + Vector3.new(0,2,0))
-                                        task.wait(0.05)
-                                    end
+                                    killVelocity(hrpNow)
+                                    hrpNow.CFrame = CFrame.new(pos + Vector3.new(0,2,0))
+                                    task.wait(0.05)
                                 end
                             end
 
@@ -2401,7 +2388,7 @@ Tabs.Gen:Toggle({
                                     local hrpNow = getHRP()
                                     if hrpNow then
                                         local dv = hrpNow.Position - pos
-                                        if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > LEASH_SQ then
+                                        if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 5*5 then
                                             killVelocity(hrpNow)
                                             hrpNow.CFrame = CFrame.new(pos + Vector3.new(0,2,0))
                                             task.wait(0.04); continue
@@ -2555,7 +2542,6 @@ Tabs.Gen:Toggle({
 
             while getgenv().autoBoss do
 
-                -- [FIX] ล้าง conn เก่าทุกต้น loop ป้องกัน attack โดยไม่มี UI
                 clearBossConn()
 
                 local bossReady = isBossEventActive()
@@ -2566,9 +2552,6 @@ Tabs.Gen:Toggle({
                     task.wait(0.8); continue
                 end
 
-                -- [PRIORITY FIX] Abandon รอ Raid เฉพาะเมื่อกำลังอยู่ใน session จริงๆ
-                -- (raidInP=true AND มี session folder จริง)
-                -- ถ้าไม่ได้ลง Raid → ไปทำ Abandon ก่อนทันที
                 if getgenv().raidInP and getRaidSession() ~= nil then
                     local rDl = os.clock() + 600
                     while getgenv().raidInP and getRaidSession() ~= nil and os.clock() < rDl do
@@ -2644,13 +2627,10 @@ Tabs.Gen:Toggle({
                     bossFail(); task.wait(1.0); continue
                 end
 
-                -- [FIX] รอให้ Boss Fight scene โหลดสมบูรณ์ก่อนเริ่ม combat
-                -- ป้องกัน "เข้า UI แล้วแต่ยังไม่ spawn mob" และ "วาปไว"
                 clearBossConn()
                 task.wait(2.5)
                 if cancelBoss() then bossFail(); continue end
 
-                -- ต้องยังอยู่ใน BossFight UI
                 if not detectBossFightUI() then
                     bossFail(); task.wait(1.0); continue
                 end
@@ -2730,8 +2710,6 @@ Tabs.Gen:Toggle({
                     summonPaused = false; summonPauseReason = nil
                 end
 
-                -- [FIX] รอให้ reward drop ก่อนกลับ Lobby
-                -- ป้องกันวาปออกก่อนได้ของ
                 if getgenv().autoBoss and not getgenv().doRift then
                     task.wait(4.5)
                     waitReady("Lobby", 10, teleportBuffers["Lobby"], 2, riftCancel)
@@ -2744,7 +2722,7 @@ Tabs.Gen:Toggle({
 })
 
 -- ==========================================
--- AUTO RAID  (FIXED v3 — Triple confirm + session refresh)
+-- AUTO RAID (FIXED v4 — Fast cycle + stable state machine)
 -- ==========================================
 Tabs.Gen:Section({Title="Raid System"})
 Tabs.Gen:Dropdown({Title="Raid Map", Flag="RaidMap",
@@ -2778,15 +2756,10 @@ local function getDoubleDungeonPad()
     return (sp and isPadAvailable(sp)) and sp or nil
 end
 
--- ==========================================
--- [FIX] countRaidMobs — force session refresh ก่อนนับทุกครั้งที่ forceRefresh=true
--- แก้ปัญหา isRaidMob คืน false เพราะ getRaidSession() cache หมดอายุ
--- ==========================================
 local raidMobCountCache, raidMobCountAt = 0, -1
 local function countRaidMobs(forceRefresh)
     local now=os.clock()
     if not forceRefresh and (now-raidMobCountAt)<0.03 then return raidMobCountCache end
-    -- [FIX] force refresh session ก่อนนับมอบเสมอ
     if forceRefresh then forceSessionRefresh() end
     lastTgtUp=0
     local count=0
@@ -2846,7 +2819,7 @@ local function collectBoxes()
         return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
     end
 
-    local collectDl = os.clock() + 15.0
+    local collectDl = os.clock() + 12.0  -- [FIX] ลดจาก 15s → 12s
     while os.clock() < collectDl and getgenv().autoRaid do
         if raidYieldCheck() then return end
         local models = getBoxModels()
@@ -2865,7 +2838,7 @@ local function collectBoxes()
                 hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 1.5, 0))
                 task.wait(0.05)
             end
-            local fireDl = os.clock() + 4.0
+            local fireDl = os.clock() + 3.0  -- [FIX] ลดจาก 4s → 3s
             while os.clock() < fireDl and getgenv().autoRaid do
                 if raidYieldCheck() then return end
                 if not prm or not prm.Parent or not prm.Enabled then break end
@@ -2887,9 +2860,12 @@ local function collectBoxes()
     end
 end
 
+-- [FIX] exitRaid — ลด timeout จาก 12s → 5s + fallback TP เร็วขึ้น
 local function exitRaid()
-    if getgenv().raidExitMode=="Stealth" then sendTeleport("Lobby"); task.wait(1.0); return end
-    local dl=os.clock()+12; local lastFireTime=0
+    if getgenv().raidExitMode=="Stealth" then
+        sendTeleport("Lobby"); task.wait(0.8); return
+    end
+    local dl=os.clock()+5; local lastFireTime=0  -- [FIX] 12s → 5s
     while os.clock()<dl and getgenv().autoRaid do
         if raidYieldCheck() then return end
         if not getRaidSession() then break end
@@ -2913,12 +2889,12 @@ local function exitRaid()
                 killVelocity(hrp); hrp.CFrame=CFrame.new(portalPart.Position+Vector3.new(0,1.5,0)); task.wait(0.05)
             end
             local now=os.clock()
-            if now-lastFireTime>=0.18 then
+            if now-lastFireTime>=0.15 then
                 for _=1,6 do firePrompt(prm); task.wait(0.04) end; lastFireTime=os.clock()
-            end; task.wait(0.10)
+            end; task.wait(0.08)
         else
-            if os.clock()>dl-8 then sendTeleport("Lobby"); task.wait(1.0); break end
-            task.wait(0.15)
+            -- [FIX] portal ไม่มี → TP Lobby ทันที
+            sendTeleport("Lobby"); task.wait(0.5); break
         end
     end
 end
@@ -2959,6 +2935,7 @@ Tabs.Gen:Toggle({
                 setRaidSt("IDLE")
             end
 
+            -- [FIX] Raid combat: snap ตรงไปมอนเลย เหมือน Auto Selected
             local function startRaidCombat()
                 if Conns.raid then Conns.raid:Disconnect() end
                 inCombat=true; cTgt=nil; cPart=nil; raidMobCountAt=-1
@@ -2996,7 +2973,6 @@ Tabs.Gen:Toggle({
                         local hrp=getHRP()
                         if hrp then
                             local mPos=cPart.Position
-                            -- [FIX] TP ตรงไปที่มอนเลย เหมือน Auto Selected ไม่เช็คระยะ
                             killVelocity(hrp)
                             hrp.CFrame=CFrame.new(mPos)
                             reqAttack(cTgt)
@@ -3005,6 +2981,7 @@ Tabs.Gen:Toggle({
                 end)
             end
 
+            -- [FIX] tpToStage — ลด timeout จาก 22s → 14s และ confirm เร็วขึ้น
             local function tpToStage(target)
                 lastStgUp=0
                 if getStg()==target then
@@ -3012,31 +2989,28 @@ Tabs.Gen:Toggle({
                     local hrp=char and char:FindFirstChild("HumanoidRootPart")
                     local hum=char and char:FindFirstChildOfClass("Humanoid")
                     if hrp and hum and hrp.Position.Y>-50 and hum.Health>0 then
-                        task.wait(0.12); lastStgUp=0
+                        task.wait(0.10); lastStgUp=0
                         if getStg()==target then return true end
                     end
                 end
                 if raidYieldCheck() then return false end
-                local deadline=os.clock()+22; local lastSend=-99
-                local interval=1.5
+                local deadline=os.clock()+14; local lastSend=-99  -- [FIX] 22s → 14s
+                local interval=1.2
                 while os.clock()<deadline do
                     if raidYieldCheck() then return false end
                     local now=os.clock()
                     if now-lastSend>=interval then
                         R.Byte:FireServer(teleportBuffers[target]); lastSend=now
-                        interval=math.min(interval*1.3, 4.0)
+                        interval=math.min(interval*1.3, 3.5)
                     end
-                    task.wait(0.08); lastStgUp=0
+                    task.wait(0.07); lastStgUp=0
                     if getStg()==target then
                         local char=lp.Character
                         local hrp=char and char:FindFirstChild("HumanoidRootPart")
                         local hum=char and char:FindFirstChildOfClass("Humanoid")
                         if hrp and hum and hrp.Position.Y>-50 and hum.Health>0 then
-                            task.wait(0.15); lastStgUp=0
-                            if getStg()==target then
-                                task.wait(0.10); lastStgUp=0
-                                if getStg()==target then return true end
-                            end
+                            task.wait(0.12); lastStgUp=0
+                            if getStg()==target then return true end
                         end
                     end
                 end
@@ -3100,7 +3074,7 @@ Tabs.Gen:Toggle({
                     end
 
                 elseif st=="TELEPORT" then
-                    if stateAge()>90 then setRaidSt("IDLE"); continue end
+                    if stateAge()>60 then setRaidSt("IDLE"); continue end  -- [FIX] 90s → 60s
                     getgenv().raidInP=false
                     local ok=tpToStage(sg())
                     if raidYieldCheck() then continue end
@@ -3111,12 +3085,11 @@ Tabs.Gen:Toggle({
 
                 elseif st=="FIND_PAD" then
                     getgenv().raidInP=false
-                    -- [PRIORITY] หาก Boss พร้อมแล้ว pause raid เพื่อให้ boss ไปก่อน
                     if getgenv().autoBoss and isBossEventActive()
                        and (os.clock()-(getgenv().lastBossKill or 0)>=25) then
                         task.wait(1.0); continue
                     end
-                    if stateAge()>25 then
+                    if stateAge()>20 then  -- [FIX] 25s → 20s
                         lastStgUp=0
                         if getStg()~=sg() then setRaidSt("TELEPORT")
                         else pads=getLobbyPads(); pIdx=1; stateEnterTime=os.clock() end
@@ -3148,12 +3121,11 @@ Tabs.Gen:Toggle({
                     cAtt=0; sessionJustCreated=false; setRaidSt("CREATE")
 
                 elseif st=="CREATE" then
-                    -- [PRIORITY] หาก Boss พร้อมแล้ว ไม่สร้าง Raid ใหม่
                     if getgenv().autoBoss and isBossEventActive()
                        and (os.clock()-(getgenv().lastBossKill or 0)>=25) then
                         setRaidSt("FIND_PAD"); continue
                     end
-                    if stateAge()>20 then
+                    if stateAge()>15 then  -- [FIX] 20s → 15s
                         cAtt=0
                         if not getgenv().isDD and #pads>0 then pIdx=(pIdx%#pads)+1 end
                         setRaidSt("FIND_PAD"); continue
@@ -3165,7 +3137,7 @@ Tabs.Gen:Toggle({
                     if cAtt==0 then
                         lastStgUp=0; if getStg()~=sg() then setRaidSt("TELEPORT"); continue end
                     end
-                    if os.clock()-lastCreateTime>=0.15 then
+                    if os.clock()-lastCreateTime>=0.12 then  -- [FIX] 0.15 → 0.12
                         lastCreateTime=os.clock()
                         R.Raids:FireServer(
                             getgenv().isDD and "Double Dungeons" or getgenv().selRaidMap,
@@ -3189,7 +3161,7 @@ Tabs.Gen:Toggle({
                     end
 
                 elseif st=="WAIT_ENTER" then
-                    if stateAge()>35 then
+                    if stateAge()>30 then  -- [FIX] 35s → 30s
                         forceSessionRefresh()
                         if getRaidSession() then
                             pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.25)
@@ -3213,11 +3185,6 @@ Tabs.Gen:Toggle({
                     getgenv().raidInP=true; summonPaused=true; summonPauseReason="raid"
                     if not inCombat then startRaidCombat() end
 
-                    -- ==========================================
-                    -- [FIX] FIGHTING inner loop — triple confirm 0.3s x2
-                    -- ป้องกันออกก่อนมอนตายหมด เพราะ countRaidMobs
-                    -- อาจคืน 0 ชั่วคราวจาก session cache miss
-                    -- ==========================================
                     local fDl=os.clock()+300
                     while os.clock()<fDl and getgenv().autoRaid do
                         if getgenv().doRift then
@@ -3227,15 +3194,12 @@ Tabs.Gen:Toggle({
                             if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                             setRaidSt("IDLE"); break
                         end
-                        -- [FIX] force session refresh ก่อนนับ
                         forceSessionRefresh()
                         raidMobCountAt = -1
                         if countRaidMobs(true)==0 then
-                            -- confirm รอบที่ 1 (0.3s)
                             task.wait(0.3)
                             forceSessionRefresh(); raidMobCountAt = -1
                             if countRaidMobs(true)==0 then
-                                -- confirm รอบที่ 2 (0.3s) — ถ้ายังเป็น 0 จริงๆ ค่อยออก
                                 task.wait(0.3)
                                 forceSessionRefresh(); raidMobCountAt = -1
                                 if countRaidMobs(true)==0 then break end
@@ -3250,9 +3214,8 @@ Tabs.Gen:Toggle({
                     end
 
                 elseif st=="POST_FIGHT" then
-                    if stateAge()>25 then abortRaid(); continue end
+                    if stateAge()>20 then abortRaid(); continue end  -- [FIX] 25s → 20s
                     if raidYieldCheck() then abortRaid(); continue end
-                    -- ตรวจก่อนว่า mob กลับมาไหม
                     forceSessionRefresh(); raidMobCountAt = -1
                     if countRaidMobs(true)>0 then setRaidSt("FIGHTING"); continue end
                     inCombat=false; getgenv().raidInP=true
@@ -3266,30 +3229,46 @@ Tabs.Gen:Toggle({
                     forceSessionRefresh()
                     if getRaidSession() then
                         pcall(function() R.RaidsL:FireServer("Leave") end)
-                        task.wait(0.25); forceSessionRefresh()
+                        task.wait(0.20); forceSessionRefresh()  -- [FIX] 0.25 → 0.20
                     end
                     setRaidSt("WAIT_EXIT")
 
                 elseif st=="WAIT_EXIT" then
-                    if stateAge()>45 then
+                    -- [FIX] ลด timeout จาก 45s → 18s
+                    if stateAge()>18 then
                         getgenv().raidInP=false
                         if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                         setRaidSt("IDLE"); continue
                     end
                     inCombat=false
                     local target=sg(); lastStgUp=0
+
+                    -- [FIX] ถ้า Stealth mode หรืออยู่ใน lobby แล้ว → ไป IDLE ทันที
                     if getStg()==target then
                         getgenv().raidInP=false
                         if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                         forceSessionRefresh(); task.wait(0.04); setRaidSt("IDLE"); continue
                     end
-                    local confirmed=tpToStage(target)
-                    if confirmed then
-                        getgenv().raidInP=false
-                        if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
-                        forceSessionRefresh(); task.wait(0.04); setRaidSt("IDLE")
-                    else
-                        if raidYieldCheck() then continue end; task.wait(0.25)
+
+                    -- [FIX] ส่ง TP ตรงๆ แล้วรอ confirm แทนที่จะ loop ใน tpToStage
+                    R.Byte:FireServer(teleportBuffers[target])
+                    local waitDl = os.clock() + 8  -- รอสูงสุด 8s
+                    while os.clock() < waitDl do
+                        task.wait(0.08); lastStgUp=0
+                        if getStg()==target then
+                            local char=lp.Character
+                            local hrp=char and char:FindFirstChild("HumanoidRootPart")
+                            local hum=char and char:FindFirstChildOfClass("Humanoid")
+                            if hrp and hum and hrp.Position.Y>-50 and hum.Health>0 then
+                                getgenv().raidInP=false
+                                if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
+                                forceSessionRefresh(); task.wait(0.04); setRaidSt("IDLE"); break
+                            end
+                        end
+                        if os.clock()-stateEnterTime > 4 then
+                            -- retry TP
+                            R.Byte:FireServer(teleportBuffers[target])
+                        end
                     end
                 end
                 RunService.Heartbeat:Wait()
