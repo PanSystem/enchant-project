@@ -1,6 +1,8 @@
 repeat task.wait() until game:IsLoaded()
 
-print("home")
+-- ==========================================
+-- [ เพิ่มส่วนรับค่าจาก Loader ที่ส่งมาให้ ]
+-- ==========================================
 local loader_isPremium, loader_allowedGames, loader_hwid = ...
 if loader_isPremium == nil then 
     loader_isPremium = false 
@@ -1956,14 +1958,13 @@ local function waitRiftModelGone(model, timeout, cancelFn)
 end
 
 -- ── Rift mob helpers (Rifts prefix, bypass cache ทั้งหมด) ───────────────
--- [v10] isRiftMobValid: Rifts prefix + BossFight prefix (Rift boss)
--- BossFight ใน Rift จะอยู่ใน ServerTargets และมีชื่อขึ้นต้น "BossFight"
+-- [v11] isRiftMobValid: Rifts prefix เท่านั้น
+-- รับเฉพาะ mob ที่ขึ้นต้นด้วย "Rifts" เช่น Rifts1773232263_906147
+-- ไม่รับ BossFight เด็ดขาด
 local function isRiftMobValid(m)
     if not m or not m.Parent then return false end
     local nm = m.Name
-    local isRiftMon  = nm:sub(1, 5) == "Rifts"
-    local isRiftBoss = nm:sub(1, 9) == "BossFight"
-    if not isRiftMon and not isRiftBoss then return false end
+    if nm:sub(1, 5) ~= "Rifts" then return false end  -- Rifts prefix เท่านั้น
     local h = m:FindFirstChildOfClass("Humanoid")
     if not h or h.Health <= 0 then return false end
     local pt = m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
@@ -2030,6 +2031,209 @@ local function flushAllCaches()
     for k in next, mobDisplayCache do mobDisplayCache[k]= nil end
 end
 
+-- ████████████████████████████████████████████████████████
+-- AUTO RIFT v11 — Reaper Pre-TP + tl=0 Trigger + 10-stud Guard
+-- ████████████████████████████████████████████████████████
+Tabs.Gen:Section({Title="Auto Rift"})
+
+--[[
+    [RIFT v11] Flow ใหม่ที่แม่นยำและเร็วกว่า:
+    ──────────────────────────────────────────────────────────────
+    0. ถ้า Auto Raid / Auto Abandon กำลังทำงาน → รอจนเสร็จ
+    1. ตรวจ window (0 < tl <= 15) → TP ไปรอที่ Reaper Society ทันที
+    2. รอ tl == 0 (หมดเวลา) → เริ่มหา RiftModel
+    3. waitForRiftModel (signal-based, max 30s หลัง tl=0)
+    4. TP ไปที่ RiftModel
+    5. Heartbeat: เช็คระยะ > 10 stud → snap กลับ + fire ProximityPrompt
+    6. รอ RiftModel หายไป → รอ Rifts mobs (max 15s)
+    7. Combat: snap+req Rifts mobs (ไม่รับ BossFight)
+    8. รอมอนหมด → cooldown 3s → loop ใหม่
+
+    Pause ระบบอื่น:
+    - Auto Raid:    ตรวจ getgenv().doRift (มีอยู่แล้ว)
+    - Auto Abandon: ตรวจ getgenv().doRift (เพิ่ม cancelBoss ใช้ doRift)
+]]
+
+-- ── SpawnedRifts helpers ─────────────────────────────────────────────────
+local function getSpawnedRifts()
+    if SpawnedRiftsFolder and SpawnedRiftsFolder.Parent then return SpawnedRiftsFolder end
+    SpawnedRiftsFolder = Workspace:FindFirstChild("SpawnedRifts")
+    return SpawnedRiftsFolder
+end
+
+-- รอ RiftModel ปรากฏใน SpawnedRifts (signal-based + poll, ทุก 0.04s)
+local function waitForRiftModel(timeout, cancelFn)
+    local sr = getSpawnedRifts()
+    if sr then
+        local ex = sr:FindFirstChild("RiftModel")
+        if ex and ex.Parent then return ex end
+    end
+    local found  = nil
+    local conns  = {}
+    local function hookSR(srFolder)
+        if not srFolder then return end
+        table.insert(conns, srFolder.ChildAdded:Connect(function(child)
+            if not found and child.Name == "RiftModel" then found = child end
+        end))
+        local ex2 = srFolder:FindFirstChild("RiftModel")
+        if ex2 and ex2.Parent then found = ex2 end
+    end
+    pcall(function()
+        if sr then
+            hookSR(sr)
+        else
+            local wc
+            wc = Workspace.ChildAdded:Connect(function(child)
+                if child.Name == "SpawnedRifts" then
+                    SpawnedRiftsFolder = child
+                    pcall(function() wc:Disconnect() end)
+                    hookSR(child)
+                end
+            end)
+            table.insert(conns, wc)
+        end
+    end)
+    local dl = os.clock() + (timeout or 30)
+    while not found and os.clock() < dl do
+        if cancelFn and cancelFn() then break end
+        local srNow = getSpawnedRifts()
+        if srNow then
+            local poll = srNow:FindFirstChild("RiftModel")
+            if poll and poll.Parent then found = poll; break end
+        end
+        task.wait(0.04)
+    end
+    for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    return found
+end
+
+-- หา BasePart ของ RiftModel เพื่อ TP
+local function getRiftModelPart(model)
+    if not model or not model.Parent then return nil end
+    if model:IsA("BasePart") then return model end
+    if model.PrimaryPart and model.PrimaryPart.Parent then return model.PrimaryPart end
+    local hrp = model:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp.Parent then return hrp end
+    return model:FindFirstChildWhichIsA("BasePart", true)
+end
+
+-- หา ProximityPrompt ใน RiftModel
+local function findRiftProxPrompt(model)
+    if not model or not model.Parent then return nil end
+    local pp = model:FindFirstChildOfClass("ProximityPrompt")
+    if pp then return pp end
+    local sub = model:FindFirstChild("Model")
+    if sub then
+        pp = sub:FindFirstChildOfClass("ProximityPrompt")
+        if pp then return pp end
+        for _, v in next, sub:GetDescendants() do
+            if v:IsA("ProximityPrompt") then return v end
+        end
+    end
+    for _, v in next, model:GetDescendants() do
+        if v:IsA("ProximityPrompt") then return v end
+    end
+    return nil
+end
+
+-- รอ RiftModel หายไป (AncestryChanged + poll)
+local function waitRiftModelGone(model, timeout, cancelFn)
+    if not model or not model.Parent then return true end
+    local gone = false
+    local conn = nil
+    pcall(function()
+        conn = model.AncestryChanged:Connect(function(_, newParent)
+            if not newParent then gone = true end
+        end)
+    end)
+    local dl = os.clock() + (timeout or 120)
+    while not gone and os.clock() < dl do
+        if cancelFn and cancelFn() then break end
+        if not model.Parent then gone = true; break end
+        task.wait(0.04)
+    end
+    if conn then pcall(function() conn:Disconnect() end) end
+    return gone
+end
+
+-- ── Rift mob helpers (Rifts prefix เท่านั้น, bypass cache) ───────────────
+local function getRiftMobPart(m)
+    if not m or not m.Parent then return nil end
+    local pp = m.PrimaryPart
+    if pp and pp.Parent then return pp end
+    local hrp = m:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp.Parent then return hrp end
+    for _, v in next, m:GetDescendants() do
+        if v:IsA("BasePart") and v.Parent then return v end
+    end
+    return nil
+end
+
+local function findNearestRiftMob()
+    lastTgtUp = 0
+    local all = ServerTargets:GetChildren()
+    cachedTargets = all
+    local hrp = getHRP(); if not hrp then return nil, nil end
+    local hPos = hrp.Position
+    local best, bestPt, bestSq = nil, nil, math.huge
+    for _, m in next, all do
+        if isRiftMobValid(m) then
+            local pt = getRiftMobPart(m)
+            if pt then
+                local d = hPos - pt.Position
+                local dsq = d.X*d.X + d.Y*d.Y + d.Z*d.Z
+                if dsq < bestSq then bestSq = dsq; best = m; bestPt = pt end
+            end
+        end
+    end
+    return best, bestPt
+end
+
+local function riftHasLiveMobs()
+    lastTgtUp = 0
+    local all = ServerTargets:GetChildren()
+    cachedTargets = all
+    for _, m in next, all do
+        if isRiftMobValid(m) then return true end
+    end
+    return false
+end
+
+local function flushAllCaches()
+    lastTgtUp = 0; lastHRPUp = 0; lastPartUp = 0
+    for k in next, mobHumCache     do mobHumCache[k]    = nil end
+    for k in next, mobNameCache    do mobNameCache[k]   = nil end
+    for k in next, mobDisplayCache do mobDisplayCache[k]= nil end
+end
+
+-- ── TP ไป Reaper Society (fire ซ้ำจน stage ตรง หรือ timeout) ────────────
+local REAPER_STAGE  = "Reaper Society"
+local REAPER_BUF    = teleportBuffers["Reaper Society"]
+local SNAP_DIST_SQ  = 100  -- 10 stud^2
+
+local function tpToReaper(cancelFn)
+    if getStg() == REAPER_STAGE then return true end
+    local dl = os.clock() + 12
+    local lastSend = -99
+    while os.clock() < dl do
+        if cancelFn and cancelFn() then return false end
+        if getStg() == REAPER_STAGE then
+            local char = lp.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            local hum  = char and char:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health > 0 and hrp.Position.Y > -50 then
+                return true
+            end
+        end
+        local now = os.clock()
+        if now - lastSend >= 0.6 then
+            R.Byte:FireServer(REAPER_BUF); lastStgUp = 0; lastSend = now
+        end
+        task.wait(0.05)
+    end
+    return getStg() == REAPER_STAGE
+end
+
 -- ── Main Toggle ──────────────────────────────────────────────────────────
 Tabs.Gen:Toggle({
     Title="Auto Rift", Flag="AutoRift", Value=false,
@@ -2045,17 +2249,18 @@ Tabs.Gen:Toggle({
         end
 
         task.spawn(function()
-            local inRift      = false
             local lastRiftEnd = 0
 
-            -- ── Signal watcher ────────────────────────────────────────
-            local riftSig     = false
-            local riftSigConn = nil
+            -- Signal watcher: ตรวจ tl เปลี่ยนแปลง
+            local riftWindowSig = false
+            local riftZeroSig   = false
+            local sigConn = nil
             pcall(function()
-                riftSigConn = RiftTimeLeft:GetPropertyChangedSignal("Value"):Connect(function()
-                    if not autoRiftRun or inRift then return end
+                sigConn = RiftTimeLeft:GetPropertyChangedSignal("Value"):Connect(function()
+                    if not autoRiftRun then return end
                     local tl = getRiftTimeLeft()
-                    if tl > 0 and tl <= 15 then riftSig = true end
+                    if tl > 0 and tl <= 15 then riftWindowSig = true end
+                    if tl == 0 then riftZeroSig = true end
                 end)
             end)
 
@@ -2063,10 +2268,8 @@ Tabs.Gen:Toggle({
                 return not autoRiftRun or not getgenv().autoRift
             end
 
-            -- ── Cleanup state ─────────────────────────────────────────
             local function doCleanup()
                 if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
-                inRift           = false
                 getgenv().doRift = false
                 lastRiftEnd      = os.clock()
                 if summonPaused and summonPauseReason == "rift" then
@@ -2078,118 +2281,139 @@ Tabs.Gen:Toggle({
             -- MAIN LOOP
             -- ────────────────────────────────────────────────────────
             while autoRiftRun do
-                if not getgenv().autoRift then break end
+                if cancelFn() then break end
 
                 -- Cooldown หลัง rift จบ
-                local cd = (lastRiftEnd + 5.0) - os.clock()
-                if cd > 0 then task.wait(math.min(cd, 0.3)); continue end
+                local cd = (lastRiftEnd + 3.0) - os.clock()
+                if cd > 0 then task.wait(math.min(cd, 0.2)); continue end
 
-                -- ตรวจ window ปัจจุบัน
+                -- ═══════════════════════════════════════════════════
+                -- รอ Auto Raid / Auto Abandon ให้เสร็จก่อน
+                -- ═══════════════════════════════════════════════════
+                if getgenv().raidInP or (getgenv().autoRaid and getgenv().raidSt ~= "IDLE") then
+                    task.wait(0.1); continue
+                end
+                if getgenv().doBoss then
+                    task.wait(0.1); continue
+                end
+
+                -- ═══════════════════════════════════════════════════
+                -- PHASE 0: ตรวจ/รอ window (0 < tl <= 15)
+                -- ═══════════════════════════════════════════════════
                 local tlNow    = getRiftTimeLeft()
                 local inWindow = tlNow > 0 and tlNow <= 15
 
                 if not inWindow then
-                    -- รอ signal
-                    riftSig = false
-                    while autoRiftRun and not riftSig do
+                    riftWindowSig = false
+                    while autoRiftRun and not riftWindowSig do
                         task.wait(0.08)
-                        if not getgenv().autoRift then break end
+                        if cancelFn() then break end
                         local tl2 = getRiftTimeLeft()
-                        if tl2 > 0 and tl2 <= 15 then riftSig = true; break end
+                        if tl2 > 0 and tl2 <= 15 then riftWindowSig = true end
                     end
                     if cancelFn() then break end
-                    tlNow    = getRiftTimeLeft()
-                    inWindow = tlNow > 0 and tlNow <= 15
-                    if not inWindow then continue end
+                    tlNow = getRiftTimeLeft()
+                    if not (tlNow > 0 and tlNow <= 15) then continue end
                 end
-                riftSig = false
+                riftWindowSig = false
 
-                -- หยุด Raid ถ้ากำลังทำอยู่
-                if getgenv().raidInP then
-                    local rDl = os.clock() + 5
-                    while getgenv().raidInP and os.clock() < rDl do task.wait(0.06) end
-                    if getRaidSession() then
-                        pcall(function() R.RaidsL:FireServer("Leave") end)
-                        task.wait(0.3); getgenv().raidInP = false
-                    end
+                -- ═══════════════════════════════════════════════════
+                -- PHASE 1: TP ไปรอที่ Reaper Society ทันทีที่เห็น window
+                -- ═══════════════════════════════════════════════════
+                local reaperOk = tpToReaper(cancelFn)
+                if cancelFn() then break end
+                -- ไม่ต้องเช็ค reaperOk เพราะแม้ TP ไม่สำเร็จก็อยู่ใกล้แล้ว
+
+                -- ═══════════════════════════════════════════════════
+                -- PHASE 2: รอ tl == 0 (rift เปิด)
+                -- ═══════════════════════════════════════════════════
+                riftZeroSig = false
+                local zeroWaitDl = os.clock() + 20  -- รอสูงสุด 20s
+                while autoRiftRun and os.clock() < zeroWaitDl do
+                    if cancelFn() then break end
+                    local tl3 = getRiftTimeLeft()
+                    if tl3 == 0 or riftZeroSig then break end
+                    task.wait(0.05)
+                end
+                riftZeroSig = false
+                if cancelFn() then break end
+
+                -- หยุด Raid session ชั่วคราวถ้ามี
+                if getgenv().raidInP and getRaidSession() then
+                    pcall(function() R.RaidsL:FireServer("Leave") end)
+                    task.wait(0.2); getgenv().raidInP = false
                 end
 
-                inRift            = true
+                -- Mark เริ่มทำ Rift → pause Raid + Abandon
                 getgenv().doRift  = true
                 summonPaused      = true
                 summonPauseReason = "rift"
 
-                -- ══════════════════════════════════════════════════════
-                -- PHASE 1: รอ RiftModel ปรากฏ (max 60s)
-                -- ══════════════════════════════════════════════════════
-                local riftModel = waitForRiftModel(60, cancelFn)
-
+                -- ═══════════════════════════════════════════════════
+                -- PHASE 3: หา RiftModel (max 30s)
+                -- ═══════════════════════════════════════════════════
+                local riftModel = waitForRiftModel(30, cancelFn)
                 if not riftModel or cancelFn() then
-                    doCleanup(); task.wait(2.0); continue
+                    doCleanup(); task.wait(1.0); continue
                 end
 
-                -- TP ไปที่ RiftModel
-                do
-                    local rPart = getRiftModelPart(riftModel)
+                -- TP ไปที่ RiftModel (snap 3x)
+                local rPartInit = getRiftModelPart(riftModel)
+                local rPos = nil
+                if rPartInit then
+                    rPos = rPartInit.Position
+                else
+                    pcall(function() rPos = riftModel:GetPivot().Position end)
+                end
+                if rPos then
                     local hrpNow = getHRP()
                     if hrpNow then
-                        if rPart then
-                            for _ = 1, 3 do
-                                killVelocity(hrpNow)
-                                hrpNow.CFrame = CFrame.new(rPart.Position)
-                                task.wait(0.04)
-                            end
-                        else
-                            -- Fallback: GetPivot
-                            pcall(function()
-                                local pivot = riftModel:GetPivot()
-                                for _ = 1, 3 do
-                                    killVelocity(hrpNow)
-                                    hrpNow.CFrame = pivot
-                                    task.wait(0.04)
-                                end
-                            end)
+                        for _ = 1, 3 do
+                            killVelocity(hrpNow)
+                            hrpNow.CFrame = CFrame.new(rPos)
+                            task.wait(0.04)
                         end
                     end
                 end
 
                 if cancelFn() then doCleanup(); continue end
 
-                -- ══════════════════════════════════════════════════════
-                -- PHASE 2: Fire ProximityPrompt จนกว่า RiftModel หายไป
-                -- ══════════════════════════════════════════════════════
+                -- ═══════════════════════════════════════════════════
+                -- PHASE 4: Fire ProximityPrompt + เช็คระยะ 10 stud
+                --          ถ้าห่างเกิน 10 stud → snap กลับทันที
+                -- ═══════════════════════════════════════════════════
                 local prompt        = findRiftProxPrompt(riftModel)
                 local rPartRef      = getRiftModelPart(riftModel)
                 local promptActive  = true
-                local promptFireConn = nil
+                local promptConn    = nil
 
-                promptFireConn = RunService.Heartbeat:Connect(function()
+                promptConn = RunService.Heartbeat:Connect(function()
                     if not promptActive then return end
                     if not riftModel or not riftModel.Parent then
                         promptActive = false; return
                     end
-
-                    -- Refresh prompt หาก หาย
+                    -- Refresh part ref
+                    if not rPartRef or not rPartRef.Parent then
+                        rPartRef = getRiftModelPart(riftModel)
+                    end
+                    -- Refresh prompt
                     if not prompt or not prompt.Parent then
                         prompt = findRiftProxPrompt(riftModel)
                     end
 
-                    -- Refresh rPart หาก หาย
-                    if not rPartRef or not rPartRef.Parent then
-                        rPartRef = getRiftModelPart(riftModel)
-                    end
-
-                    -- Snap ติดกับ RiftModel ตลอดเวลา
                     local hrp = getHRP()
                     if hrp and rPartRef and rPartRef.Parent then
-                        local dv = hrp.Position - rPartRef.Position
-                        if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 4 then
+                        local mPos = rPartRef.Position
+                        local dv   = hrp.Position - mPos
+                        local dsq  = dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z
+                        -- ✅ เช็คระยะ > 10 stud → snap กลับ
+                        if dsq > SNAP_DIST_SQ then
                             killVelocity(hrp)
-                            hrp.CFrame = CFrame.new(rPartRef.Position)
+                            hrp.CFrame = CFrame.new(mPos)
                         end
                     end
 
-                    -- Fire ProximityPrompt
+                    -- Fire ProximityPrompt ทุก frame
                     if prompt and prompt.Parent then
                         pcall(function() fireproximityprompt(prompt) end)
                     end
@@ -2198,41 +2422,32 @@ Tabs.Gen:Toggle({
                 -- รอ RiftModel หายไป (max 120s)
                 waitRiftModelGone(riftModel, 120, cancelFn)
 
-                -- หยุด fire
                 promptActive = false
-                if promptFireConn then
-                    pcall(function() promptFireConn:Disconnect() end)
-                    promptFireConn = nil
-                end
-
+                if promptConn then pcall(function() promptConn:Disconnect() end); promptConn = nil end
                 if cancelFn() then doCleanup(); continue end
 
-                -- flush caches หลัง model หาย
                 flushAllCaches()
-                task.wait(0.3)
+                task.wait(0.2)
 
-                -- ══════════════════════════════════════════════════════
-                -- PHASE 3: รอ Rifts mobs spawn (max 15s)
-                -- ══════════════════════════════════════════════════════
-                local mobFound  = false
+                -- ═══════════════════════════════════════════════════
+                -- PHASE 5: รอ Rifts mobs spawn (max 15s)
+                -- ═══════════════════════════════════════════════════
                 local mobWaitDl = os.clock() + 15
                 while os.clock() < mobWaitDl and autoRiftRun do
-                    if riftHasLiveMobs() then mobFound = true; break end
-                    task.wait(0.06)
+                    if riftHasLiveMobs() then break end
+                    task.wait(0.05)
+                end
+                if not riftHasLiveMobs() or cancelFn() then
+                    doCleanup(); task.wait(1.0); continue
                 end
 
-                if not mobFound or cancelFn() then
-                    doCleanup(); task.wait(2.0); continue
-                end
-
-                -- Snap ไปมอนแรก + fire init attack
+                -- Snap ไปมอนแรก + init attack
                 local initMob, initPart = findNearestRiftMob()
                 if initPart then
                     local hrpNow = getHRP()
                     if hrpNow then
                         for _ = 1, 3 do
-                            killVelocity(hrpNow)
-                            hrpNow.CFrame = CFrame.new(initPart.Position)
+                            killVelocity(hrpNow); hrpNow.CFrame = CFrame.new(initPart.Position)
                             task.wait(0.02)
                         end
                     end
@@ -2241,8 +2456,6 @@ Tabs.Gen:Toggle({
                 if initMob then
                     pcall(function() R.Req:FireServer(initMob.Name, "Mouse") end)
                 end
-
-                -- Re-equip DPS units ก่อน combat
                 if dpsActive then
                     for _ = 1, 3 do
                         pcall(function() R.Byte:FireServer(buffer.fromstring("\026\000")) end)
@@ -2250,21 +2463,20 @@ Tabs.Gen:Toggle({
                     end
                 end
 
-                -- ══════════════════════════════════════════════════════
-                -- PHASE 4: Combat (Heartbeat)
-                -- ══════════════════════════════════════════════════════
+                -- ═══════════════════════════════════════════════════
+                -- PHASE 6: Combat Heartbeat (Rifts mobs เท่านั้น)
+                -- ═══════════════════════════════════════════════════
                 if Conns.rift then Conns.rift:Disconnect() end
 
                 local cRiftMob, cRiftPart = initMob, initPart
-                local _reqLast   = 0
-                local _scanTick  = 0
-                local _reEqLast  = 0
-                local _stuckCnt  = 0
+                local _reqLast  = 0
+                local _scanTick = 0
+                local _reEqLast = 0
+                local _stuckCnt = 0
 
                 Conns.rift = RunService.Heartbeat:Connect(function()
                     if not autoRiftRun or not getgenv().autoRift then return end
                     local now = os.clock()
-
                     sendAtk(); sendClk()
 
                     -- Validate mob
@@ -2277,18 +2489,15 @@ Tabs.Gen:Toggle({
                         end
                     end
 
-                    -- Rescan ทุก 2 frame
                     _scanTick = _scanTick + 1
                     if not cRiftMob and _scanTick % 2 == 0 then
                         cRiftMob, cRiftPart = findNearestRiftMob()
                     end
 
-                    -- Stuck detection: ถ้าหามอบไม่เจอนาน → flush cache
                     if not cRiftMob then
                         _stuckCnt = _stuckCnt + 1
-                        if _stuckCnt >= 120 then
-                            _stuckCnt = 0
-                            flushAllCaches()
+                        if _stuckCnt >= 90 then
+                            _stuckCnt = 0; flushAllCaches()
                             cRiftMob, cRiftPart = findNearestRiftMob()
                         end
                         return
@@ -2302,27 +2511,24 @@ Tabs.Gen:Toggle({
                     end
 
                     local hrp = getHRP(); if not hrp then return end
-                    -- Snap ตรงไปมอน ทุก frame (aggressive)
                     killVelocity(hrp)
                     hrp.CFrame = CFrame.new(cRiftPart.Position)
 
-                    -- Fire R.Req โดยตรง (rate 0.03s)
                     if now - _reqLast >= 0.03 then
                         _reqLast = now
                         R.Req:FireServer(cRiftMob.Name, "Mouse")
                         pendingRequests[cRiftMob] = now
                     end
 
-                    -- Re-equip DPS watchdog ทุก 2.5s
-                    if dpsActive and now - _reEqLast >= 2.5 then
+                    if dpsActive and now - _reEqLast >= 2.0 then
                         _reEqLast = now
                         pcall(function() R.Byte:FireServer(buffer.fromstring("\026\000")) end)
                     end
                 end)
 
-                -- ── รอมอนหมด (confirm 4 ครั้ง) ───────────────────────
-                local combatDl   = os.clock() + 300
-                local noMobTick  = 0
+                -- รอมอนหมด (confirm 4 ครั้ง)
+                local combatDl  = os.clock() + 300
+                local noMobTick = 0
                 while autoRiftRun and os.clock() < combatDl do
                     task.wait(0.08)
                     if not riftHasLiveMobs() then
@@ -2333,16 +2539,15 @@ Tabs.Gen:Toggle({
                     end
                 end
 
-                -- Cleanup combat
                 if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
                 cRiftMob = nil; cRiftPart = nil
                 doCleanup()
-                task.wait(0.5)
+                task.wait(0.3)
             end
 
             -- Final cleanup
-            if riftSigConn then pcall(function() riftSigConn:Disconnect() end) end
-            if Conns.rift   then Conns.rift:Disconnect(); Conns.rift = nil end
+            if sigConn then pcall(function() sigConn:Disconnect() end) end
+            if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
             getgenv().doRift = false
             if summonPaused and summonPauseReason == "rift" then
                 summonPaused = false; summonPauseReason = nil
@@ -2499,7 +2704,15 @@ Tabs.Gen:Toggle({
         if not state then bossFail(); return end
 
         task.spawn(function()
-            local function cancelBoss() return not getgenv().autoBoss or getgenv().doRift end
+            local function cancelBoss() return not getgenv().autoBoss end
+
+            -- [v11] pause loop: รอ rift ให้เสร็จก่อน ถ้า doRift=true
+            local function waitRiftDone()
+                while getgenv().autoBoss and getgenv().doRift do
+                    task.wait(0.15)
+                end
+                return not getgenv().autoBoss
+            end
 
             local bossSignalFired = false
             local bossSignalConn = nil
@@ -2526,10 +2739,19 @@ Tabs.Gen:Toggle({
 
                 getgenv().bossWaiting = true
 
+                -- [v11] รอ Rift ให้เสร็จก่อน ถ้ากำลังทำ Rift อยู่
+                if getgenv().doRift then
+                    if waitRiftDone() then continue end
+                end
+
                 if getgenv().raidInP and getRaidSession() ~= nil then
                     local rDl = os.clock() + 600
                     while getgenv().raidInP and getRaidSession()~=nil and os.clock()<rDl do
-                        if cancelBoss() then break end; task.wait(0.5)
+                        if cancelBoss() or getgenv().doRift then break end; task.wait(0.5)
+                    end
+                    -- รอ rift อีกครั้งถ้าเกิดขึ้นระหว่างรอ raid
+                    if getgenv().doRift then
+                        if waitRiftDone() then continue end
                     end
                 end
                 if cancelBoss() then continue end
