@@ -1434,23 +1434,23 @@ Tabs.Gen:Toggle({
 })
 
 -- ████████████████████████████████████████████████████████████████████
--- DPS BOOST ENGINE v15 — ULTRA MAX THROUGHPUT ZERO LATENCY
+-- DPS BOOST ENGINE v13R — Optimized Classic (ไม่กระตุก แม่นยำ เร็ว)
 -- ████████████████████████████████████████████████████████████████████
 --[[
-    v15 Upgrades (สูงสุดทุกมิติ):
-    ──────────────────────────────────────────────────────────
-    • BURST_FRAMES: 12 (max redundancy ทุก tick)
-    • BURST_COOLDOWN: 0 (ยิง burst ได้ทุก frame ไม่มีหน่วงเลย)
-    • HIT_RATIO: 0.10 (trigger จาก 10% unit เท่านั้น)
-    • STUCK_THRESH: 10 frames (~0.17s detect stuck)
-    • DPS_REQ_RATE_HB: 0.001 (req ถี่สุด 1ms)
-    • SNAP_SQ: 100 (10 stud)
-    • Burst lane: DPS_EQ×5 + ATK×2 + CLK ต่อ frame
-    • No-unit fallback: fire DPS_EQ×3 ทุก frame
-    • Stuck watchdog: double-burst + force-triple immediate
-    • Pre-burst seeding: 12 frames × double fire = 24 packets
-    • AA keepalive: 0.2s interval
-    • wireUnit: immediate triple-burst + defer triple สำหรับ unit เยอะ
+    v13R (Refined) — ปรับจาก v13 เดิม:
+    ─────────────────────────────────────────────────────────────────
+    • BURST_FRAMES   : 6      (burst 6 frame ต่อครั้ง เพียงพอ ไม่ overflow)
+    • BURST_COOLDOWN : 0.004  (4ms — ป้องกัน packet flood แต่ยังเร็ว)
+    • HIT_RATIO      : 0.35   (35% unit hit → trigger burst)
+    • STUCK_THRESH   : 50     (50 frame ~0.83s ก่อน force burst)
+    • DPS_REQ_RATE_HB: 0.004  (4ms req — แม่นยำ ไม่ spam)
+    • SNAP_SQ        : 100    (10 stud snap เหมือนเดิม)
+    • Burst lane     : DPS_EQ×2 + ATK ต่อ burst frame (เดิม)
+    • No-unit fallback: DPS_EQ×2 ทุก dpsInputDelay
+    • Stuck watchdog : double-burst + defer (เดิม)
+    • Pre-seeding    : 6×2 = 12 packets (เดิม)
+    • AA keepalive   : 0.4s interval (เสถียร)
+    • wireUnit       : burst + defer สำหรับ ≥3 units (เดิม)
 ]]
 Tabs.Pre:Section({Title="DPS Boost"})
 
@@ -1468,7 +1468,7 @@ Tabs.Pre:Input({
     Value="0.02", Placeholder="0.005 – 2.0",
     Callback=function(v)
         local n = tonumber(v)
-        if n then dpsInputDelay = math.clamp(n, 0.001, 5.0) end
+        if n then dpsInputDelay = math.clamp(n, 0.005, 5.0) end
     end
 })
 Tabs.Pre:Input({
@@ -1485,10 +1485,10 @@ local DS2 = {
     hb=nil, aaConn=nil, aaHB=nil, lastAA=0,
     conns={}, desc={}, folder={},
     debs={}, unitCount=0,
-    hitCounter    = 0,
-    burstPending  = 0,
-    lastBurst     = 0,
-    lastNoFire    = 0,
+    hitCounter   = 0,
+    burstPending = 0,
+    lastBurst    = 0,
+    lastNoFire   = 0,
     scanFn=nil, mob=nil, part=nil,
     scanTick=0, chkTick=0,
 }
@@ -1523,7 +1523,7 @@ local function startAAKeepalive()
     DS2.aaHB = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
         local now = os.clock()
-        if now - DS2.lastAA < 0.2 then return end  -- [v15] 0.2s keepalive
+        if now - DS2.lastAA < 0.4 then return end   -- 0.4s keepalive
         if not isAAOn() then doAAOn() else DS2.lastAA = now end
     end)
 end
@@ -1533,15 +1533,15 @@ local function stopAAKeepalive()
     doAAOff()
 end
 
--- ── [v15] Constants — Ultra Max Throughput ───────────────────────────
-local BURST_FRAMES   = 12       -- max burst redundancy
-local BURST_COOLDOWN = 0        -- ยิงทุก frame ไม่มี cooldown
-local HIT_RATIO      = 0.10     -- trigger ที่ 10% unit เท่านั้น
-local STUCK_THRESH   = 10       -- detect stuck ใน 10 frame (~0.17s)
-local DPS_REQ_RATE_HB= 0.001   -- 1ms req interval
-local SNAP_SQ        = 100      -- 10 stud snap
+-- ── [v13R] Constants ─────────────────────────────────────────────────
+local BURST_FRAMES    = 6        -- burst frame count
+local BURST_COOLDOWN  = 0.004    -- 4ms minimum cooldown ระหว่าง burst
+local HIT_RATIO       = 0.35     -- 35% unit hit → trigger
+local STUCK_THRESH    = 50       -- 50 frame ~0.83s detect stuck
+local DPS_REQ_RATE_HB = 0.004    -- 4ms req rate
+local SNAP_SQ         = 100      -- 10 stud snap
 
--- ── [v15] triggerBurst ─────────────────────────────────────────────────
+-- ── [v13R] triggerBurst ───────────────────────────────────────────────
 local function triggerBurst()
     if not dpsActive then return end
     local now = os.clock()
@@ -1558,13 +1558,13 @@ local function triggerBurst()
     DS2.hitCounter   = 0
 end
 
--- ── [v15] checkHitThreshold ───────────────────────────────────────────
+-- ── [v13R] checkHitThreshold ─────────────────────────────────────────
 local function checkHitThreshold()
     if DS2.unitCount == 0 then return false end
     return DS2.hitCounter >= math.max(1, math.ceil(DS2.unitCount * HIT_RATIO))
 end
 
--- ── [v15] Master Heartbeat — Ultra Throughput Quad-Lane Fire ─────────
+-- ── [v13R] Master Heartbeat ───────────────────────────────────────────
 local function startMasterHB()
     if DS2.hb then DS2.hb:Disconnect() end
     local _stuckFrames = 0
@@ -1576,7 +1576,7 @@ local function startMasterHB()
         if not hum2 or hum2.Health <= 0 then return end
         local now = os.clock()
 
-        -- ── Lane 1: ATK + CLK (rate-limited) ──────────────────────────
+        -- ── Lane 1: ATK + CLK (rate-limited เดิม) ────────────────────
         if now - _lastAtk >= Const.ATK_RATE then
             _lastAtk = now
             R.Byte:FireServer(unpack(attackArgs))
@@ -1586,35 +1586,22 @@ local function startMasterHB()
             R.Byte:FireServer(unpack(clickArgs))
         end
 
-        -- ── Lane 2: BURST FIRE (penta-fire + dual atk per frame) ──────
+        -- ── Lane 2: BURST FIRE (DPS_EQ×2 + ATK ต่อ frame) ───────────
         if DS2.burstPending > 0 then
-            -- [v15] 5x DPS_EQ + 2x ATK + 1x CLK ต่อ burst frame
-            R.Byte:FireServer(DPS_EQ)
-            R.Byte:FireServer(DPS_EQ)
-            R.Byte:FireServer(DPS_EQ)
             R.Byte:FireServer(DPS_EQ)
             R.Byte:FireServer(DPS_EQ)
             R.Byte:FireServer(unpack(attackArgs))
-            R.Byte:FireServer(unpack(attackArgs))
-            R.Byte:FireServer(unpack(clickArgs))
-            _lastAtk = now; _lastClk = now
+            _lastAtk = now
             DS2.burstPending = DS2.burstPending - 1
             _stuckFrames = 0
         else
-            -- ── Lane 3: No-unit fallback (triple fire ทุก frame) ──────
+            -- ── Lane 3: No-unit fallback ──────────────────────────────
             if DS2.unitCount == 0 then
                 if now - DS2.lastNoFire >= dpsInputDelay then
                     DS2.lastNoFire = now
                     R.Byte:FireServer(DPS_EQ)
                     R.Byte:FireServer(DPS_EQ)
-                    R.Byte:FireServer(DPS_EQ)
                 end
-            end
-            -- ── Lane 4: Always-on background fire ─────────────────────
-            -- ยิง DPS_EQ ทุก frame แบบ low-priority (ไม่รอ burst)
-            if DS2.unitCount > 0 and now - DS2.lastNoFire >= 0.01 then
-                DS2.lastNoFire = now
-                R.Byte:FireServer(DPS_EQ)
             end
             -- ── Stuck watchdog ─────────────────────────────────────────
             if DS2.unitCount > 0 then
@@ -1622,13 +1609,8 @@ local function startMasterHB()
                     _stuckFrames = _stuckFrames + 1
                     if _stuckFrames >= STUCK_THRESH then
                         _stuckFrames = 0
-                        -- Triple burst เมื่อ stuck
                         triggerBurst()
                         task.defer(triggerBurst)
-                        task.defer(function()
-                            task.wait(0.005)
-                            if dpsActive then triggerBurst() end
-                        end)
                     end
                 else
                     _stuckFrames = 0
@@ -1662,17 +1644,15 @@ local function startMasterHB()
             local mn = mobNameCache[DS2.mob]
             if not mn then mn = getValidMobName(DS2.mob) end
             if type(mn) == "string" and mn ~= "" and mn ~= "nil" then
-                -- [v15] Triple-fire req
                 R.Req:FireServer(mn, "Mouse")
-                R.Req:FireServer(mn, "Mouse")
-                R.Req:FireServer(mn, "Mouse")
+                R.Req:FireServer(mn, "Mouse")   -- double-fire req
                 pendingRequests[DS2.mob] = now
             end
         end
     end)
 end
 
--- ── [v15] findDebounce ────────────────────────────────────────────────
+-- ── [v13R] findDebounce ───────────────────────────────────────────────
 local function findDebounce(unitInst)
     local d = unitInst:FindFirstChild("Debounce")
     if d and d:IsA("BoolValue") then return d end
@@ -1686,7 +1666,7 @@ local function findDebounce(unitInst)
     return nil
 end
 
--- ── [v15] wireUnit: immediate triple-burst on hit ─────────────────────
+-- ── [v13R] wireUnit ───────────────────────────────────────────────────
 local function wireUnit(unitInst)
     local uName = unitInst.Name
     if DS2.debs[uName] then return end
@@ -1715,15 +1695,9 @@ local function wireUnit(unitInst)
         if cur and not prev then
             DS2.hitCounter = DS2.hitCounter + 1
             if checkHitThreshold() then
-                -- [v15] Triple-burst immediate
                 triggerBurst()
-                task.defer(triggerBurst)
-                if DS2.unitCount >= 2 then
-                    task.defer(function()
-                        task.wait(0.002)
-                        if dpsActive then triggerBurst() end
-                    end)
-                end
+                -- defer burst สำหรับ unit จำนวนมาก
+                if DS2.unitCount >= 3 then task.defer(triggerBurst) end
             end
         end
         prev = cur
@@ -1770,9 +1744,8 @@ Tabs.Pre:Toggle({
         DS2.debs={}; DS2.unitCount=0
         safeBoostUntil = 0
 
-        -- [v15] Pre-burst seeding: 12 frames × triple fire = 36 packets
-        for _ = 1, 12 do
-            pcall(function() R.Byte:FireServer(DPS_EQ) end)
+        -- Pre-burst seeding: 6×2 = 12 packets
+        for _ = 1, 6 do
             pcall(function() R.Byte:FireServer(DPS_EQ) end)
             pcall(function() R.Byte:FireServer(DPS_EQ) end)
         end
@@ -1802,14 +1775,10 @@ Tabs.Pre:Toggle({
             end
             if not dpsActive then return end
 
-            -- [v15] Re-burst หลัง wire: 4 bursts ติดกัน
+            -- Re-burst หลัง wire: 2 bursts
+            task.wait(0.02)
+            if dpsActive then triggerBurst() end
             task.wait(0.01)
-            if dpsActive then triggerBurst() end
-            task.wait(0.005)
-            if dpsActive then triggerBurst() end
-            task.wait(0.005)
-            if dpsActive then triggerBurst() end
-            task.wait(0.005)
             if dpsActive then triggerBurst() end
 
             local connAdded = plrFolder.ChildAdded:Connect(function(u)
