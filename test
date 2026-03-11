@@ -581,6 +581,8 @@ local riftLastSeen         = 0
 local RIFT_GRACE_TIME      = 3.0
 local riftTextLatch        = false
 local riftTextHitCount     = 0
+local riftCooldownUntil    = 0        -- cooldown หลัง rift จบ
+local RIFT_POST_COOLDOWN   = 12.0    -- วินาที
 
 local SGUI_SKIP = {"hub","wind","exploit","synapse","kiriot","sentinel",
                    "krnl","fluxus","script","executor","delta"}
@@ -639,9 +641,13 @@ local function checkRiftPhysical()
 end
 
 local function resetRiftDetection()
-    riftTextLatch=false
-    riftTextHitCount=0; riftLastSeen=0
-    rftActive=false; lastRftUp=0
+    riftTextLatch    = false
+    riftTextHitCount = 0
+    riftLastSeen     = 0
+    rftActive        = false
+    lastRftUp        = 0
+    -- [FIX] cooldown 12s หลัง rift จบ ป้องกัน re-trigger จาก leftover data
+    riftCooldownUntil = os.clock() + RIFT_POST_COOLDOWN
 end
 
 -- ==========================================
@@ -1881,27 +1887,65 @@ local function riftHasLiveMobs()
     return false
 end
 
+-- ==========================================
+-- [FIX] RIFT DETECTION — Ultra Strict v4
+-- ==========================================
+
+-- riftHasPortal: เช็คว่ามี ProximityPrompt จริงๆ ใน SpawnedRifts
+-- (portal ที่ยังไม่ได้เข้า หรือ portal ออก)
+local function riftHasPortal()
+    local function scanForPrompt(folder)
+        if not folder or not folder.Parent then return false end
+        for _, child in ipairs(folder:GetChildren()) do
+            for _, v in ipairs(child:GetDescendants()) do
+                if v:IsA("ProximityPrompt") and v.Enabled then return true end
+            end
+            -- ตรวจ child เองด้วย
+            for _, v in ipairs(child:GetChildren()) do
+                if v:IsA("ProximityPrompt") and v.Enabled then return true end
+            end
+        end
+        return false
+    end
+    local maps = Workspace:FindFirstChild("Maps")
+    local rs   = maps and maps:FindFirstChild("Reaper Society")
+    if rs then
+        local sr = rs:FindFirstChild("SpawnedRifts")
+        if sr and scanForPrompt(sr) then return true end
+    end
+    local d = Workspace:FindFirstChild("SpawnedRifts")
+    if d and scanForPrompt(d) then return true end
+    return false
+end
+
+-- riftContainerExists: ใช้แค่ backup หลัง TP เท่านั้น (ไม่ใช้ trigger)
 local function riftContainerExists()
     local maps = Workspace:FindFirstChild("Maps")
     local rs   = maps and maps:FindFirstChild("Reaper Society")
     if rs then
         local sr = rs:FindFirstChild("SpawnedRifts")
         if sr and #sr:GetChildren()>0 then return true end
-        for _,c in ipairs(rs:GetChildren()) do
-            if c.Name:lower():find("rift",1,true) and #c:GetChildren()>0 then return true end
-        end
     end
     local d = Workspace:FindFirstChild("SpawnedRifts")
     if d and #d:GetChildren()>0 then return true end
     return false
 end
 
--- riftExists: ใช้ physical evidence เท่านั้น
--- textLatch ใช้แค่เพิ่มความถี่ในการ scan ไม่ใช้เป็น trigger หลัก
+-- riftExistsStrict: trigger TP เฉพาะเมื่อมี mob หรือ portal จริงๆ
+-- ไม่นับ container เปล่า / text notification
+local function riftExistsStrict()
+    if os.clock() < riftCooldownUntil then return false end  -- cooldown หลัง rift จบ
+    if riftHasLiveMobs() then return true end
+    if riftHasPortal()   then return true end
+    return false
+end
+
+-- riftExists: ใช้ post-TP verify เท่านั้น (กว้างกว่า strict)
 local function riftExists()
+    if os.clock() < riftCooldownUntil then return false end
     if riftHasLiveMobs()     then return true end
+    if riftHasPortal()       then return true end
     if riftContainerExists() then return true end
-    if checkRiftPhysical()   then return true end
     return false
 end
 
@@ -2077,6 +2121,7 @@ Tabs.Gen:Toggle({
             if summonPaused and summonPauseReason=="rift" then summonPaused=false; summonPauseReason=nil end
             return
         end
+        riftCooldownUntil = 0  -- clear cooldown เมื่อ enable ใหม่
         task.spawn(function()
             local LEASH_SQ    = 5 * 5
             local cRiftMob    = nil
@@ -2141,30 +2186,47 @@ Tabs.Gen:Toggle({
                 end)
             end
 
+            -- [FIX] rift confirm counter — ต้อง 5 consecutive positives × 0.3s = 1.5s
+            -- ก่อนถือว่า rift เกิดจริงและ TP ไป
+            local riftConfirmCount = 0
+            local RIFT_NEED_CONFIRM = 5
+
             while autoRiftRun do
                 if not getgenv().autoRift then break end
 
-                -- [FIX] ใช้ physical evidence เท่านั้น ไม่รวม textLatch
-                -- textLatch แค่ทำให้ scan ถี่ขึ้น แต่ไม่ trigger TP
-                local hasRift = riftExists()
-
-                -- textLatch เป็นสัญญาณล่วงหน้า ให้ scan physical ถี่ขึ้น
-                if not hasRift and riftTextLatch then
-                    -- รอ physical evidence จาก text hint สั้นๆ
-                    task.wait(0.10); continue
+                -- ── Cooldown guard ──────────────────────────────────────
+                if os.clock() < riftCooldownUntil then
+                    riftConfirmCount = 0
+                    if riftEngaged or getgenv().doRift then
+                        -- อยู่ใน rift แต่ cooldown running = rift จบแล้ว endRift
+                        if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
+                        cRiftMob = nil; cRiftPart = nil; riftEngaged = false
+                        getgenv().doRift = false
+                        if summonPaused and summonPauseReason == "rift" then
+                            summonPaused = false; summonPauseReason = nil
+                        end
+                    end
+                    task.wait(0.5); continue
                 end
 
-                if not hasRift then
+                -- ── ตรวจ physical evidence (STRICT) ────────────────────
+                local strictOk = riftExistsStrict()
+
+                if not strictOk then
+                    riftConfirmCount = 0
                     if riftEngaged or getgenv().doRift then endRift() end
                     task.wait(0.25)
                     continue
                 end
 
-                -- Double-confirm physical rift
-                task.wait(0.15)
-                if not riftExists() then task.wait(0.20); continue end
-                task.wait(0.10)
-                if not riftExists() then task.wait(0.20); continue end
+                -- ── Accumulate consecutive confirms ─────────────────────
+                riftConfirmCount = riftConfirmCount + 1
+                if riftConfirmCount < RIFT_NEED_CONFIRM then
+                    task.wait(0.3)   -- รอแล้ว re-check ในรอบหน้า
+                    continue
+                end
+                -- ผ่าน 5 confirms แล้ว → rift เกิดจริงๆ
+                riftConfirmCount = 0
 
                 if not getgenv().doRift then
                     getgenv().doRift    = true
@@ -2180,41 +2242,48 @@ Tabs.Gen:Toggle({
                             task.wait(0.3); getgenv().raidInP = false
                         end
                     end
-                    -- [PRIORITY] Rift > Boss: ออกจาก Boss ทันที
+                    -- [PRIORITY] Rift > Boss: บอก boss ให้หยุด
                     if getgenv().doBoss then task.wait(0.8) end
                 end
 
+                -- ── TP ไป Reaper Society ────────────────────────────────
                 if getStg() ~= "Reaper Society" then
+                    -- ก่อน TP ต้อง re-confirm อีกครั้ง (ป้องกัน rift จบระหว่างรอ)
+                    if not riftExistsStrict() then
+                        getgenv().doRift = false
+                        resetRiftDetection(); riftEngaged = false
+                        if summonPaused and summonPauseReason == "rift" then
+                            summonPaused = false; summonPauseReason = nil
+                        end
+                        continue
+                    end
                     local cancelRift = function()
                         return not autoRiftRun or not getgenv().autoRift
                     end
                     local ok = tpToRiftStage(cancelRift)
                     if not ok then
-                        -- TP ล้มเหลว → reset แล้วรอ
                         getgenv().doRift = false
-                        resetRiftDetection()
-                        riftEngaged = false
+                        resetRiftDetection(); riftEngaged = false
                         if summonPaused and summonPauseReason == "rift" then
                             summonPaused = false; summonPauseReason = nil
                         end
-                        task.wait(1.0); continue
+                        task.wait(1.5); continue
                     end
-                    task.wait(0.35)
+                    task.wait(0.4)
                     lastHRPUp = 0; lastPartUp = 0
                 end
 
-                -- [FIX] หลัง TP ถึง Reaper Society แล้ว ต้องตรวจยืนยันว่า Rift เกิดจริงๆ
-                -- รอ mob สูงสุด 8 วินาที ถ้าไม่เจอ = false alarm → กลับ Lobby
-                local riftVerifyDl = os.clock() + 8.0
-                local riftVerified = false
-                while os.clock() < riftVerifyDl and autoRiftRun do
+                -- ── หลัง TP: verify ว่า rift ยังอยู่จริง (max 6s) ────────
+                -- ถ้าไม่เจอ evidence → false alarm, กลับ Lobby
+                local verifyDl = os.clock() + 6.0
+                local verified = false
+                while os.clock() < verifyDl and autoRiftRun do
                     task.wait(0.3); lastTgtUp = 0
-                    if riftHasLiveMobs() then riftVerified = true; break end
-                    if riftContainerExists() then riftVerified = true; break end
+                    if riftHasLiveMobs() then verified = true; break end
+                    if riftHasPortal()   then verified = true; break end
                 end
 
-                if not riftVerified then
-                    -- Rift ยังไม่เกิดจริง หรือ false alarm → กลับ Lobby รอ
+                if not verified then
                     if Conns.rift then Conns.rift:Disconnect(); Conns.rift = nil end
                     cRiftMob = nil; cRiftPart = nil; riftEngaged = false
                     getgenv().doRift = false
@@ -2223,7 +2292,7 @@ Tabs.Gen:Toggle({
                         summonPaused = false; summonPauseReason = nil
                     end
                     tpToLobbyConfirmed()
-                    task.wait(1.5); continue
+                    task.wait(2.0); continue
                 end
 
                 lastTgtUp = 0
@@ -2497,10 +2566,12 @@ Tabs.Gen:Toggle({
                     task.wait(0.8); continue
                 end
 
-                -- [PRIORITY] Abandon รอ Raid เสร็จก่อนเสมอ
-                if getgenv().raidInP then
-                    local rDl = os.clock() + 600  -- รอได้ถึง 10 นาที
-                    while getgenv().raidInP and os.clock() < rDl do
+                -- [PRIORITY FIX] Abandon รอ Raid เฉพาะเมื่อกำลังอยู่ใน session จริงๆ
+                -- (raidInP=true AND มี session folder จริง)
+                -- ถ้าไม่ได้ลง Raid → ไปทำ Abandon ก่อนทันที
+                if getgenv().raidInP and getRaidSession() ~= nil then
+                    local rDl = os.clock() + 600
+                    while getgenv().raidInP and getRaidSession() ~= nil and os.clock() < rDl do
                         if cancelBoss() then break end
                         task.wait(0.5)
                     end
@@ -3040,6 +3111,11 @@ Tabs.Gen:Toggle({
 
                 elseif st=="FIND_PAD" then
                     getgenv().raidInP=false
+                    -- [PRIORITY] หาก Boss พร้อมแล้ว pause raid เพื่อให้ boss ไปก่อน
+                    if getgenv().autoBoss and isBossEventActive()
+                       and (os.clock()-(getgenv().lastBossKill or 0)>=25) then
+                        task.wait(1.0); continue
+                    end
                     if stateAge()>25 then
                         lastStgUp=0
                         if getStg()~=sg() then setRaidSt("TELEPORT")
@@ -3072,6 +3148,11 @@ Tabs.Gen:Toggle({
                     cAtt=0; sessionJustCreated=false; setRaidSt("CREATE")
 
                 elseif st=="CREATE" then
+                    -- [PRIORITY] หาก Boss พร้อมแล้ว ไม่สร้าง Raid ใหม่
+                    if getgenv().autoBoss and isBossEventActive()
+                       and (os.clock()-(getgenv().lastBossKill or 0)>=25) then
+                        setRaidSt("FIND_PAD"); continue
+                    end
                     if stateAge()>20 then
                         cAtt=0
                         if not getgenv().isDD and #pads>0 then pIdx=(pIdx%#pads)+1 end
