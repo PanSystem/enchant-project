@@ -1998,82 +1998,99 @@ Tabs.Gen:Toggle({
 
             -- ==========================================
             -- ==========================================
-            -- MAIN LOOP — TimeLeft 0-10 trigger
-            -- เช็ค TimeLeft.Value ทุก 0.5s
-            -- เมื่อ TimeLeft > 0 และ <= 10 → วาปไปทำ Rift
-            -- เสร็จแล้วกลับมารอรอบต่อไปด้วย logic เดิม
+            -- MAIN LOOP — TimeLeft < 5 trigger
+            -- poll ทุก 0.5s
+            -- TimeLeft < 5 = Rift เพิ่งจะ/กำลัง spawn
+            --   → วาปมา Reaper Society → รอมอน → ตีจนหมด → กลับ
             -- ==========================================
             while autoRiftRun do
                 if not getgenv().autoRift then break end
 
                 local tl = getRiftTimeLeft()
 
-                -- ── ยังไม่ถึงเวลา (TimeLeft > 10 หรือ = 0) → รอ ──
-                if not (tl > 0 and tl <= 10) then
-                    -- ถ้าเพิ่งจบ Rift ค้างอยู่ → cleanup
-                    if inRift then doExitRift() end
+                -- ── ยังไม่ถึงเวลา → รอ ──────────────────────────────
+                if not (tl > 0 and tl < 5) then
                     task.wait(0.5)
                     continue
                 end
 
-                -- ── TimeLeft อยู่ในช่วง 0 < tl <= 10 → เข้า Rift ──
-                if not inRift then
-                    -- หยุด Raid ถ้ากำลังอยู่
-                    if getgenv().raidInP then
-                        local rDl = os.clock() + 5.0
-                        while getgenv().raidInP and os.clock() < rDl do task.wait(0.06) end
-                        if getRaidSession() then
-                            pcall(function() R.RaidsL:FireServer("Leave") end)
-                            task.wait(0.3); getgenv().raidInP = false
-                        end
-                    end
-
-                    getgenv().doRift  = true
-                    inRift            = true
-                    summonPaused      = true
-                    summonPauseReason = "rift"
-
-                    -- TP ไป Reaper Society (ถ้ายังไม่อยู่)
-                    if getStg() ~= "Reaper Society" then
-                        local cancelRift = function() return not autoRiftRun or not getgenv().autoRift end
-                        local ok = tpToRiftStage(cancelRift)
-                        if not ok then
-                            inRift = false; getgenv().doRift = false
-                            if summonPaused and summonPauseReason=="rift" then
-                                summonPaused=false; summonPauseReason=nil
-                            end
-                            task.wait(1.5); continue
-                        end
-                        -- reset cache หลัง TP
-                        lastTgtUp=0; lastHRPUp=0; lastPartUp=0
-                        for k in next, mobHumCache     do mobHumCache[k]=nil end
-                        for k in next, mobNameCache    do mobNameCache[k]=nil end
-                        for k in next, mobDisplayCache do mobDisplayCache[k]=nil end
-                        task.wait(0.4)
+                -- ── TimeLeft < 5 → เข้า Rift ────────────────────────
+                -- หยุด Raid ถ้ากำลังอยู่
+                if getgenv().raidInP then
+                    local rDl = os.clock() + 5.0
+                    while getgenv().raidInP and os.clock() < rDl do task.wait(0.06) end
+                    if getRaidSession() then
+                        pcall(function() R.RaidsL:FireServer("Leave") end)
+                        task.wait(0.3); getgenv().raidInP = false
                     end
                 end
 
-                -- ── อยู่ใน Reaper Society แล้ว → หามอนตี / ใช้ portal ──
-                lastTgtUp = 0
-                local hasMobs = riftHasLiveMobs()
+                getgenv().doRift  = true
+                inRift            = true
+                summonPaused      = true
+                summonPauseReason = "rift"
 
-                if hasMobs then
-                    -- มีมอน → snap ไปและตี
-                    if not Conns.rift then
-                        local _, np = findNearestRiftMob()
-                        if np then
-                            local hrpNow = getHRP()
-                            if hrpNow then
-                                killVelocity(hrpNow)
-                                hrpNow.CFrame = CFrame.new(np.Position)
-                            end
+                -- TP ไป Reaper Society
+                if getStg() ~= "Reaper Society" then
+                    local cancelRift = function() return not autoRiftRun or not getgenv().autoRift end
+                    local ok = tpToRiftStage(cancelRift)
+                    if not ok then
+                        -- TP ล้มเหลว → reset แล้วรอรอบต่อไป
+                        inRift = false; getgenv().doRift = false
+                        if summonPaused and summonPauseReason=="rift" then
+                            summonPaused=false; summonPauseReason=nil
                         end
-                        startRiftCombat()
+                        task.wait(2.0); continue
                     end
-                    task.wait(0.06)
-                else
-                    -- ไม่มีมอน → เช็ค portal / รอ wave
+                    -- reset cache หลัง TP
+                    lastTgtUp=0; lastHRPUp=0; lastPartUp=0
+                    for k in next, mobHumCache     do mobHumCache[k]=nil end
+                    for k in next, mobNameCache    do mobNameCache[k]=nil end
+                    for k in next, mobDisplayCache do mobDisplayCache[k]=nil end
+                    task.wait(0.5)
+                end
+
+                -- รอมอน spawn (สูงสุด 20s)
+                local mobWaitDl = os.clock() + 20
+                while os.clock() < mobWaitDl and autoRiftRun do
+                    lastTgtUp = 0
+                    if riftHasLiveMobs() then break end
+                    task.wait(0.2)
+                end
+
+                -- ── COMBAT PHASE ─────────────────────────────────────
+                if riftHasLiveMobs() then
+                    -- snap ไปมอนก่อน
+                    local _, np = findNearestRiftMob()
+                    if np then
+                        local hrpNow = getHRP()
+                        if hrpNow then
+                            killVelocity(hrpNow)
+                            hrpNow.CFrame = CFrame.new(np.Position)
+                        end
+                    end
+                    startRiftCombat()
+
+                    -- ตีจนมอนหมด
+                    local combatDl = os.clock() + 300
+                    while autoRiftRun and os.clock() < combatDl do
+                        task.wait(0.1)
+                        lastTgtUp = 0
+                        if not riftHasLiveMobs() then
+                            -- double-confirm
+                            task.wait(0.3); lastTgtUp = 0
+                            if not riftHasLiveMobs() then break end
+                        end
+                    end
                     stopRiftCombat()
+                end
+
+                -- ── EXIT PHASE ───────────────────────────────────────
+                -- ใช้ portal ออก (ถ้ามี) ไม่งั้น TP Lobby
+                local exitDl = os.clock() + 20
+                while autoRiftRun and os.clock() < exitDl do
+                    lastStgUp = 0
+                    if getStg() == "Lobby" then break end
                     local prm, part = findRiftPortalEntry()
                     if prm and prm.Parent and prm.Enabled then
                         if part and part.Parent then
@@ -2084,16 +2101,23 @@ Tabs.Gen:Toggle({
                                 task.wait(0.04)
                             end
                         end
-                        firePrompt(prm); task.wait(0.06)
+                        firePrompt(prm); task.wait(0.08)
                     else
-                        -- รอมอน spawn หรือ TimeLeft หมด
-                        task.wait(0.25)
-                        -- ถ้า TimeLeft กลับเป็น 0 แล้ว (rift จบ) → exit
-                        if getRiftTimeLeft() <= 0 then
-                            doExitRift()
-                        end
+                        -- portal ยังไม่มา → TP Lobby ตรงๆ
+                        R.Byte:FireServer(teleportBuffers["Lobby"]); task.wait(1.0)
+                        lastStgUp = 0
+                        if getStg() == "Lobby" then break end
                     end
                 end
+
+                -- reset state → กลับไปทำอย่างอื่น รอรอบต่อไป
+                inRift = false; getgenv().doRift = false
+                if summonPaused and summonPauseReason=="rift" then
+                    summonPaused=false; summonPauseReason=nil
+                end
+
+                -- หน่วงเล็กน้อยก่อน poll รอบต่อไป (ป้องกัน re-trigger ทันที)
+                task.wait(5.0)
             end
 
             -- Cleanup เมื่อปิด
