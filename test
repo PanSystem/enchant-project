@@ -1441,18 +1441,31 @@ Tabs.Gen:Toggle({
     end
 })
 
--- ████████████████████████████████████████████████████
--- DPS BOOST ENGINE v11 — Ultra Precision, Signal-First
--- ████████████████████████████████████████████████████
+-- ████████████████████████████████████████████████████████████████████
+-- DPS BOOST ENGINE v12 — Per-Unit Burst Fire, Zero-State, Max Throughput
+-- ████████████████████████████████████████████████████████████████████
+--[[
+    v12 Design Philosophy (ไม่ลด delay, หาวิธีที่ดีกว่า):
+    ─────────────────────────────────────────────────────
+    • ยกเลิก State Machine (eqState 0/1) → fire ทันทีไม่รอ
+    • Per-unit trigger: debounce false→true ของ unit ใดก็ตาม
+      → เพิ่ม hitCounter → ถ้า hitCounter >= threshold → burst fire ทันที
+    • Burst Fire: ยิง DPS_EQ 3 ครั้งใน 3 frame ติดกัน (ไม่มี delay)
+      → ป้องกัน packet loss / server drop
+    • Threshold: ceil(unitCount * 0.45) → trigger เร็วขึ้น ไม่ต้องรอทุก unit
+    • hitCounter reset ทันทีหลัง burst เพื่อรอ cycle ใหม่
+    • Anti-spam: burstCooldown 6ms ระหว่าง burst series
+    • Stuck watchdog: 90 frame ไม่มีใคร hit → force burst
+    • autoFire (no unit): fire ทุก dpsInputDelay โดยไม่รอ signal
+]]
 Tabs.Pre:Section({Title="DPS Boost"})
 
 local dpsCleanup
 do
 
-local DPS_EQ = buffer.fromstring("\026\000")
-
-local dpsInputDelay  = 0.02   -- faster default
-local safeDMGLimit   = 2000000
+local DPS_EQ        = buffer.fromstring("\026\000")
+local dpsInputDelay = 0.02
+local safeDMGLimit  = 2000000
 local safeBoostUntil = 0
 getgenv().safeBoostActive = false
 
@@ -1473,22 +1486,23 @@ Tabs.Pre:Input({
     end
 })
 
--- ── DS2 State ───────────────────────────────────────────────────────────
+-- ── DS2 State ────────────────────────────────────────────────────────────
 local DS2 = {
     hb=nil, aaConn=nil, aaHB=nil, lastAA=0,
     conns={}, desc={}, folder={},
     debs={}, unitCount=0,
-    eqState=0, eqNext=0,
-    hitThisCycle=0,
-    allHitFlag=false,
-    hitTimestamp={},      -- [v11] per-unit last hit time
+    -- [v12] burst system
+    hitCounter    = 0,       -- units hit this cycle
+    burstPending  = 0,       -- frames left to burst-fire
+    lastBurst     = 0,       -- os.clock() of last burst start
+    lastNoFire    = 0,       -- os.clock() timer for no-unit fallback
+    -- mob snap
     scanFn=nil, mob=nil, part=nil,
     scanTick=0, chkTick=0,
-    lastEqFire=0,         -- [v11] throttle eq fires
 }
 DS = DS2
 
--- ── AA keepalive ─────────────────────────────────────────────────────────
+-- ── AA keepalive ──────────────────────────────────────────────────────────
 local function getAABool() return MyData:FindFirstChild("Auto_Attacks") end
 local function isAAOn()    local v=getAABool(); return v~=nil and v.Value==true end
 local function doAAOn()    R.Byte:FireServer(AA_ON); DS2.lastAA=os.clock() end
@@ -1498,10 +1512,9 @@ local function wireAA(av)
     if DS2.aaConn then pcall(function() DS2.aaConn:Disconnect() end) end
     DS2.aaConn = av:GetPropertyChangedSignal("Value"):Connect(function()
         if not dpsActive or av.Value then return end
-        if dpsActive and not isAAOn() then doAAOn() end
+        if not isAAOn() then doAAOn() end
     end)
 end
-
 local function startAAKeepalive()
     doAAOn()
     local av = getAABool()
@@ -1510,8 +1523,7 @@ local function startAAKeepalive()
         task.spawn(function()
             local dl = os.clock() + 30
             while os.clock() < dl and dpsActive do
-                av = getAABool()
-                if av then wireAA(av); break end
+                av = getAABool(); if av then wireAA(av); break end
                 task.wait(0.3)
             end
         end)
@@ -1523,70 +1535,57 @@ local function startAAKeepalive()
         if not isAAOn() then doAAOn() else DS2.lastAA = now end
     end)
 end
-
 local function stopAAKeepalive()
     if DS2.aaConn then pcall(function() DS2.aaConn:Disconnect() end); DS2.aaConn=nil end
     if DS2.aaHB   then pcall(function() DS2.aaHB:Disconnect()   end); DS2.aaHB=nil   end
     doAAOff()
 end
 
--- ── [v11] allUnitsHit: ตรวจว่าทุก unit hit ใน cycle นี้ ─────────────────
--- ใช้ hitTimestamp เพื่อ track ว่า hit เกิดขึ้นหลัง cycle start จริง
-local _cycleStartTime = 0
+-- ── [v12] triggerBurst: เริ่ม burst-fire sequence ───────────────────────
+-- ยิง DPS_EQ 3 frame ติดกัน → ให้ server รับอย่างน้อย 1 ใน 3
+local BURST_FRAMES   = 3     -- จำนวน frame ที่ยิงต่อเนื่อง
+local BURST_COOLDOWN = 0.006 -- 6ms minimum ระหว่าง burst
 
-local function allUnitsHit()
-    if DS2.unitCount == 0 then return false end
-    local count = 0
-    for uName, deb in next, DS2.debs do
-        if deb and deb.Parent and deb.Value then
-            -- [v11] ต้องเป็น hit ที่เกิดหลัง cycle เริ่ม
-            local ts = DS2.hitTimestamp[uName] or 0
-            if ts >= _cycleStartTime then
-                count = count + 1
-            end
-        end
-    end
-    return count >= DS2.unitCount
-end
-
--- ── [v11] partialHit: hit อย่างน้อย N% ของ unit ────────────────────────
-local function partialHit(ratio)
-    if DS2.unitCount == 0 then return false end
-    local count = 0
-    for uName, deb in next, DS2.debs do
-        if deb and deb.Parent and deb.Value then
-            local ts = DS2.hitTimestamp[uName] or 0
-            if ts >= _cycleStartTime then count = count + 1 end
-        end
-    end
-    return count >= math.ceil(DS2.unitCount * (ratio or 0.6))
-end
-
--- ── [v11] fireEquip: anti-spam equip fire ───────────────────────────────
-local function fireEquip()
+local function triggerBurst()
+    if not dpsActive then return end
     local now = os.clock()
-    if now - DS2.lastEqFire < 0.008 then return end  -- min 8ms between fires
-    DS2.lastEqFire = now
-    R.Byte:FireServer(DPS_EQ)
+    if now - DS2.lastBurst < BURST_COOLDOWN then return end
+    -- Safe Boost check
+    if getgenv().safeBoostActive then
+        local dpsObj = lp:FindFirstChild("DPS")
+        if dpsObj and dpsObj.Value >= safeDMGLimit then
+            safeBoostUntil = now + 5.0; return
+        end
+    end
+    if now < safeBoostUntil then return end
+    DS2.lastBurst   = now
+    DS2.burstPending = BURST_FRAMES
+    DS2.hitCounter  = 0  -- reset cycle
 end
 
-local DPS_REQ_RATE_HB = 0.010  -- [v11] เร็วขึ้น 0.012→0.010
-local SNAP_SQ = 4
+-- ── [v12] Threshold: trigger burst เมื่อ hit เกิน N% ────────────────────
+local HIT_RATIO = 0.45  -- 45% ของ unit hit → burst ทันที
 
--- ── [v11] Master Heartbeat ───────────────────────────────────────────────
+local function checkHitThreshold()
+    if DS2.unitCount == 0 then return false end
+    return DS2.hitCounter >= math.max(1, math.ceil(DS2.unitCount * HIT_RATIO))
+end
+
+local DPS_REQ_RATE_HB = 0.008  -- [v12] 8ms req rate (เร็วสุด)
+local SNAP_SQ         = 4
+
+-- ── [v12] Master Heartbeat ───────────────────────────────────────────────
 local function startMasterHB()
     if DS2.hb then DS2.hb:Disconnect() end
 
-    -- Stuck watchdog: นับ frame ที่ไม่มี unit ตีเลย
     local _stuckFrames  = 0
-    local _lastReEq     = 0
-    local STUCK_THRESH  = 120  -- ~2s @ 60fps
+    local STUCK_THRESH  = 90   -- ~1.5s @ 60fps (เร็วกว่า v11)
 
     DS2.hb = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
         local now = os.clock()
 
-        -- ── ATK + CLK ────────────────────────────────────────────────────
+        -- ── ATK + CLK ─────────────────────────────────────────────────────
         if now - _lastAtk >= Const.ATK_RATE then
             _lastAtk = now; R.Byte:FireServer(unpack(attackArgs))
         end
@@ -1594,90 +1593,34 @@ local function startMasterHB()
             _lastClk = now; R.Byte:FireServer(unpack(clickArgs))
         end
 
-        local st = DS2.eqState
-
-        -- ── STATE 0: รอ allHit signal ────────────────────────────────────
-        if st == 0 then
-            if now < safeBoostUntil then return end
-
-            local shouldFire = DS2.allHitFlag
-
-            -- [v11] fallback 1: ไม่มี unit → fire ตาม timer
-            if not shouldFire and DS2.unitCount == 0 then
-                shouldFire = now >= DS2.eqNext
-            end
-
-            -- [v11] fallback 2: allUnitsHit signal-based
-            if not shouldFire and DS2.unitCount > 0 then
-                shouldFire = allUnitsHit()
-            end
-
-            -- [v11] fallback 3: partial hit + timeout (กัน unit ช้า/กด ค้าง)
-            if not shouldFire and DS2.unitCount > 0 then
-                local elapsed = now - _cycleStartTime
-                if elapsed >= dpsInputDelay * 8 and partialHit(0.5) then
-                    shouldFire = true
+        -- ── [v12] BURST FIRE: fire ทุก frame ตาม burstPending ─────────────
+        if DS2.burstPending > 0 then
+            R.Byte:FireServer(DPS_EQ)
+            DS2.burstPending = DS2.burstPending - 1
+        else
+            -- ── [v12] No-unit fallback: ไม่มี unit → fire ตาม timer ──────
+            if DS2.unitCount == 0 then
+                if now - DS2.lastNoFire >= dpsInputDelay then
+                    DS2.lastNoFire = now
+                    R.Byte:FireServer(DPS_EQ)
                 end
             end
 
-            if shouldFire then
-                DS2.allHitFlag   = false
-                DS2.hitThisCycle = 0
-                _stuckFrames     = 0
-                _cycleStartTime  = now  -- reset cycle timestamp
-
-                -- Safe Boost check
-                if getgenv().safeBoostActive then
-                    local dpsObj = lp:FindFirstChild("DPS")
-                    if dpsObj and dpsObj.Value >= safeDMGLimit then
-                        safeBoostUntil = now + 5.0
-                        DS2.eqState    = 0
-                        DS2.allHitFlag = false
-                        return
-                    end
-                end
-
-                DS2.eqState = 1
-                DS2.eqNext  = now + dpsInputDelay
-
-            else
-                -- [v11] Stuck watchdog
-                if DS2.unitCount > 0 then
-                    local anyHit = false
-                    for uName, deb in next, DS2.debs do
-                        local ts = DS2.hitTimestamp[uName] or 0
-                        if ts >= _cycleStartTime and deb and deb.Value then
-                            anyHit = true; break
-                        end
-                    end
-                    if not anyHit then
-                        _stuckFrames = _stuckFrames + 1
-                        if _stuckFrames >= STUCK_THRESH and now - _lastReEq >= 2.0 then
-                            _stuckFrames = 0
-                            _lastReEq    = now
-                            _cycleStartTime = now
-                            fireEquip()
-                            DS2.allHitFlag   = false
-                            DS2.hitThisCycle = 0
-                        end
-                    else
+            -- ── [v12] Stuck watchdog ──────────────────────────────────────
+            if DS2.unitCount > 0 then
+                if DS2.hitCounter == 0 then
+                    _stuckFrames = _stuckFrames + 1
+                    if _stuckFrames >= STUCK_THRESH then
                         _stuckFrames = 0
+                        triggerBurst()  -- force re-equip
                     end
+                else
+                    _stuckFrames = 0
                 end
-            end
-
-        -- ── STATE 1: delay หมด → fire equip ─────────────────────────────
-        elseif st == 1 then
-            if now >= DS2.eqNext then
-                fireEquip()
-                DS2.eqState = 0
-                -- [v11] next cycle เริ่มทันที (ไม่รอ 2x delay)
-                DS2.eqNext  = now + dpsInputDelay
-                _stuckFrames = 0
             end
         end
 
-        -- ── MOB SNAP + REQ ───────────────────────────────────────────────
+        -- ── MOB SNAP + REQ ────────────────────────────────────────────────
         if not DS2.scanFn then return end
 
         DS2.chkTick = DS2.chkTick + 1
@@ -1686,9 +1629,8 @@ local function startMasterHB()
                 DS2.mob=nil; DS2.part=nil
             end
         end
-
         DS2.scanTick = DS2.scanTick + 1
-        if not DS2.mob and DS2.scanTick % 3 == 0 then
+        if not DS2.mob and DS2.scanTick % 2 == 0 then  -- scan ทุก 2 frame (เร็วกว่า 3)
             DS2.mob, DS2.part = DS2.scanFn()
         end
         if not DS2.mob or not DS2.part then return end
@@ -1711,46 +1653,27 @@ local function startMasterHB()
     end)
 end
 
--- ── [v11] autoFire fallback ──────────────────────────────────────────────
-local _autoFireHB = nil
-local function startAutoFire()
-    if _autoFireHB then return end
-    _autoFireHB = RunService.Heartbeat:Connect(function()
-        if not dpsActive or DS2.unitCount > 0 then return end
-        if DS2.eqState == 0 and os.clock() > DS2.eqNext then
-            DS2.allHitFlag = true
-        end
-    end)
-end
-local function stopAutoFire()
-    if _autoFireHB then pcall(function() _autoFireHB:Disconnect() end); _autoFireHB = nil end
-end
-
--- ── [v11] findDebounce: ค้นหา Debounce ทุก level ──────────────────────
+-- ── [v12] findDebounce ────────────────────────────────────────────────────
 local function findDebounce(unitInst)
-    -- Direct child first
     local d = unitInst:FindFirstChild("Debounce")
     if d and d:IsA("BoolValue") then return d end
-    -- Children's children
     for _, child in next, unitInst:GetChildren() do
         local dd = child:FindFirstChild("Debounce")
         if dd and dd:IsA("BoolValue") then return dd end
     end
-    -- Full descendants scan (fallback)
     for _, v in next, unitInst:GetDescendants() do
         if v.Name == "Debounce" and v:IsA("BoolValue") then return v end
     end
     return nil
 end
 
--- ── [v11] wireUnit: signal-based per-unit hit detection ─────────────────
+-- ── [v12] wireUnit: per-unit signal → immediate burst trigger ────────────
 local function wireUnit(unitInst)
     local uName = unitInst.Name
-    if DS2.debs[uName] then return end  -- already wired
+    if DS2.debs[uName] then return end
 
     local deb = findDebounce(unitInst)
     if not deb then
-        -- รอ Debounce เพิ่มใน future (DescendantAdded)
         local dc
         dc = unitInst.DescendantAdded:Connect(function(v)
             if v.Name == "Debounce" and v:IsA("BoolValue") then
@@ -1765,23 +1688,18 @@ local function wireUnit(unitInst)
 
     DS2.debs[uName]  = deb
     DS2.unitCount    = DS2.unitCount + 1
-    DS2.hitTimestamp[uName] = 0
 
     local prev = deb.Value
     DS2.conns[uName] = deb:GetPropertyChangedSignal("Value"):Connect(function()
         if not dpsActive then return end
         local cur = deb.Value
-
-        -- false→true: unit เพิ่งตี → บันทึกเวลา + ตรวจ allHit
+        -- false→true: unit เพิ่งตี → เพิ่ม counter → ตรวจ threshold
         if cur and not prev then
-            DS2.hitThisCycle = DS2.hitThisCycle + 1
-            DS2.hitTimestamp[uName] = os.clock()
-
-            if DS2.eqState == 0 and allUnitsHit() then
-                DS2.allHitFlag = true
+            DS2.hitCounter = DS2.hitCounter + 1
+            if checkHitThreshold() then
+                triggerBurst()  -- fire burst ทันที ไม่รอ HB
             end
         end
-
         prev = cur
     end)
 end
@@ -1789,24 +1707,19 @@ end
 local function unwireUnit(uName)
     local c = DS2.conns[uName]; if c then pcall(function() c:Disconnect() end); DS2.conns[uName]=nil end
     local d = DS2.desc[uName];  if d then pcall(function() d:Disconnect() end); DS2.desc[uName]=nil end
-    if DS2.debs[uName] then
-        DS2.debs[uName]         = nil
-        DS2.hitTimestamp[uName] = nil
-        DS2.unitCount = math.max(0, DS2.unitCount-1)
-    end
+    if DS2.debs[uName] then DS2.debs[uName]=nil; DS2.unitCount=math.max(0,DS2.unitCount-1) end
 end
 
--- ── dpsCleanup ───────────────────────────────────────────────────────────
+-- ── dpsCleanup ────────────────────────────────────────────────────────────
 local function dpsCleanup_impl()
     dpsActive = false
-    DS2.eqState=0; DS2.eqNext=0; DS2.allHitFlag=false; DS2.hitThisCycle=0
+    DS2.hitCounter=0; DS2.burstPending=0; DS2.lastBurst=0; DS2.lastNoFire=0
     DS2.mob=nil; DS2.part=nil; DS2.scanFn=nil
-    DS2.debs={}; DS2.unitCount=0; DS2.hitTimestamp={}
-    safeBoostUntil = 0; _cycleStartTime = 0
+    DS2.debs={}; DS2.unitCount=0
+    safeBoostUntil = 0
 
     pcall(function() R.Byte:FireServer(DPS_EQ) end)
 
-    stopAutoFire()
     if DS2.hb then pcall(function() DS2.hb:Disconnect() end); DS2.hb=nil end
     stopAAKeepalive()
     for _,c in next, DS2.conns  do pcall(function() c:Disconnect() end) end
@@ -1817,7 +1730,7 @@ local function dpsCleanup_impl()
 end
 dpsCleanup = dpsCleanup_impl
 
--- ── Toggle ───────────────────────────────────────────────────────────────
+-- ── Toggle ────────────────────────────────────────────────────────────────
 Tabs.Pre:Toggle({
     Title="DPS Boost", Flag="DPSBoost", Value=false,
     Callback=function(state)
@@ -1827,15 +1740,16 @@ Tabs.Pre:Toggle({
         if not state then dpsCleanup(); return end
 
         dpsActive = true
-        DS2.eqState=0; DS2.eqNext=0; DS2.allHitFlag=false; DS2.hitThisCycle=0
-        DS2.debs={}; DS2.unitCount=0; DS2.hitTimestamp={}
-        _cycleStartTime = os.clock()
+        DS2.hitCounter=0; DS2.burstPending=0; DS2.lastBurst=0; DS2.lastNoFire=0
+        DS2.debs={}; DS2.unitCount=0
         safeBoostUntil = 0
 
-        fireEquip()
+        -- Initial burst to kick-start units
+        for _ = 1, BURST_FRAMES do
+            pcall(function() R.Byte:FireServer(DPS_EQ) end)
+        end
         startAAKeepalive()
         startMasterHB()
-        startAutoFire()
 
         task.spawn(function()
             if not dpsActive then return end
@@ -1854,16 +1768,15 @@ Tabs.Pre:Toggle({
 
             unitServerFolder = plrFolder
 
-            -- Wire existing units
             for _, u in next, plrFolder:GetChildren() do
                 if not dpsActive then return end
                 wireUnit(u)
             end
             if not dpsActive then return end
 
-            -- [v11] Fire equip once more after wiring
-            task.wait(0.05)
-            if dpsActive then fireEquip() end
+            -- Re-burst after all units wired
+            task.wait(0.03)
+            if dpsActive then triggerBurst() end
 
             local connAdded = plrFolder.ChildAdded:Connect(function(u)
                 if dpsActive then wireUnit(u) end
@@ -1876,7 +1789,6 @@ Tabs.Pre:Toggle({
                 pcall(function() connRemoved:Disconnect() end)
                 return
             end
-
             table.insert(DS2.folder, connAdded)
             table.insert(DS2.folder, connRemoved)
 
@@ -1899,7 +1811,7 @@ Tabs.Pre:Toggle({
         getgenv().safeBoostActive = state
         safeBoostUntil = 0
         if not state and dpsActive then
-            task.defer(function() fireEquip() end)
+            task.defer(function() triggerBurst() end)
         end
     end
 })
@@ -2046,9 +1958,14 @@ local function waitRiftModelGone(model, timeout, cancelFn)
 end
 
 -- ── Rift mob helpers (Rifts prefix, bypass cache ทั้งหมด) ───────────────
+-- [v10] isRiftMobValid: Rifts prefix + BossFight prefix (Rift boss)
+-- BossFight ใน Rift จะอยู่ใน ServerTargets และมีชื่อขึ้นต้น "BossFight"
 local function isRiftMobValid(m)
     if not m or not m.Parent then return false end
-    if m.Name:sub(1, 5) ~= "Rifts" then return false end
+    local nm = m.Name
+    local isRiftMon  = nm:sub(1, 5) == "Rifts"
+    local isRiftBoss = nm:sub(1, 9) == "BossFight"
+    if not isRiftMon and not isRiftBoss then return false end
     local h = m:FindFirstChildOfClass("Humanoid")
     if not h or h.Health <= 0 then return false end
     local pt = m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
@@ -2061,7 +1978,6 @@ local function isRiftMobValid(m)
     local p = pt.Position
     if p.Y < -200 then return false end
     if math.abs(p.X) < 0.001 and math.abs(p.Z) < 0.001 and math.abs(p.Y) < 0.001 then return false end
-    -- อัพเดต cache
     mobHumCache[m] = h
     return true
 end
@@ -3011,27 +2927,28 @@ Tabs.Gen:Toggle({
                     local hrp=char and char:FindFirstChild("HumanoidRootPart")
                     local hum=char and char:FindFirstChildOfClass("Humanoid")
                     if hrp and hum and hrp.Position.Y>-50 and hum.Health>0 then
-                        task.wait(0.10); lastStgUp=0
+                        task.wait(0.06); lastStgUp=0
                         if getStg()==target then return true end
                     end
                 end
                 if raidYieldCheck() then return false end
-                local deadline=os.clock()+14; local lastSend=-99
-                local interval=1.2
+                -- [v12] ลด interval และ deadline ให้เร็วขึ้น
+                local deadline=os.clock()+12; local lastSend=-99
+                local interval=0.5  -- เริ่มที่ 0.5s (เดิม 1.2s)
                 while os.clock()<deadline do
                     if raidYieldCheck() then return false end
                     local now=os.clock()
                     if now-lastSend>=interval then
                         R.Byte:FireServer(teleportBuffers[target]); lastSend=now
-                        interval=math.min(interval*1.3, 3.5)
+                        interval=math.min(interval*1.5, 2.5)  -- cap ที่ 2.5s
                     end
-                    task.wait(0.07); lastStgUp=0
+                    task.wait(0.06); lastStgUp=0
                     if getStg()==target then
                         local char=lp.Character
                         local hrp=char and char:FindFirstChild("HumanoidRootPart")
                         local hum=char and char:FindFirstChildOfClass("Humanoid")
                         if hrp and hum and hrp.Position.Y>-50 and hum.Health>0 then
-                            task.wait(0.12); lastStgUp=0
+                            task.wait(0.08); lastStgUp=0
                             if getStg()==target then return true end
                         end
                     end
@@ -3136,7 +3053,7 @@ Tabs.Gen:Toggle({
                     end
                     local ct=pad:FindFirstChild("Centers") or pad:FindFirstChildWhichIsA("BasePart")
                     if ct then tpDirect(ct,true,false) else tpTarget(pad) end
-                    task.wait(0.10)
+                    task.wait(0.04)  -- [v12] 0.10→0.04 minimal confirm wait
                     if not getgenv().autoRaid or raidYieldCheck() then continue end
                     cAtt=0; sessionJustCreated=false; setRaidSt("CREATE")
                 elseif st=="CREATE" then
@@ -3144,7 +3061,7 @@ Tabs.Gen:Toggle({
                        and (os.clock()-(getgenv().lastBossKill or 0)>=25) then
                         setRaidSt("FIND_PAD"); continue
                     end
-                    if stateAge()>15 then
+                    if stateAge()>12 then  -- [v12] 15→12s timeout
                         cAtt=0
                         if not getgenv().isDD and #pads>0 then pIdx=(pIdx%#pads)+1 end
                         setRaidSt("FIND_PAD"); continue
@@ -3156,27 +3073,29 @@ Tabs.Gen:Toggle({
                     if cAtt==0 then
                         lastStgUp=0; if getStg()~=sg() then setRaidSt("TELEPORT"); continue end
                     end
-                    if os.clock()-lastCreateTime>=0.12 then
+                    -- [v12] fire create request ทันที ไม่รอ cooldown นาน
+                    if os.clock()-lastCreateTime>=0.08 then
                         lastCreateTime=os.clock()
                         R.Raids:FireServer(
                             getgenv().isDD and "Double Dungeons" or getgenv().selRaidMap,
                             getgenv().selRaidDiff)
                         cAtt=cAtt+1
                     end
-                    local cDl=os.clock()+2.0
+                    -- [v12] รอ session สั้นลง 2.0→0.8s ต่อ attempt
+                    local cDl=os.clock()+0.8
                     while os.clock()<cDl do
                         if raidYieldCheck() then break end
                         if sessionJustCreated then sessionJustCreated=false; setRaidSt("WAIT_ENTER"); break end
                         forceSessionRefresh()
                         if getRaidSession() then setRaidSt("WAIT_ENTER"); break end
-                        task.wait(0.02)
+                        task.wait(0.015)
                     end
                     if st~="WAIT_ENTER" then
-                        if cAtt>=5 then
+                        if cAtt>=6 then  -- [v12] 5→6 attempts ก่อนเปลี่ยน pad
                             cAtt=0
                             if not getgenv().isDD and #pads>0 then pIdx=(pIdx%#pads)+1 end
                             setRaidSt("FIND_PAD")
-                        else task.wait(0.08) end
+                        else task.wait(0.02) end  -- [v12] 0.08→0.02
                     end
                 elseif st=="WAIT_ENTER" then
                     if stateAge()>30 then
