@@ -1779,7 +1779,7 @@ Tabs.Pre:Toggle({
 })
 
 Tabs.Pre:Toggle({
-    Title="Safe Boost", Desc="หยุด 5s เมื่อ DMG เกิน limit",
+    Title="Safe Boost", Desc="",
     Flag="SafeBoost", Value=false,
     Callback=function(state)
         if state and not isPremiumUser then
