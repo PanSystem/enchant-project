@@ -2163,22 +2163,35 @@ Tabs.Gen:Toggle({
             end
 
             -- ========================================================
-            -- [FIX RIFT v6] SIGNAL-BASED DETECTION
-            -- ใช้ GetPropertyChangedSignal แทน poll
-            -- trigger เมื่อ tl > 0 AND tl <= 15
+            -- [FIX RIFT v8] SIGNAL-BASED DETECTION — REVISED LOGIC
+            --
+            -- กฎ (ตามที่ user ระบุ):
+            --   • tl อยู่ใน 0 < tl <= 15  → รอ Rift spawn ที่ Reaper Society
+            --   • tl เป็น 0               → reset ปกติ ห้าม trigger ใหม่
+            --   • หากอยู่ที่ RS แล้ว เมื่อ tl เข้า window → ไม่ต้อง TP ซ้ำ
+            --   • รอมอน Rifts ใน ServerTargets สูงสุด 30s
+            --   • ถ้าไม่เจอมอนใน 30s → ออกจาก RS ไปทำงานอื่น
+            --
+            -- Signal fires ทุกครั้งที่ tl เปลี่ยน
+            -- ใช้ lastTLValue เพื่อ detect การ "เข้า window" ครั้งแรก
+            -- (จาก tl > 15 → tl <= 15, หรือ tl = 0 แสดงว่า countdown ใหม่จะเริ่ม)
             -- ========================================================
             local riftSignalFired = false
             local riftSignalConn  = nil
+            local lastTLSeen      = getRiftTimeLeft()  -- track ค่าก่อนหน้า
 
-            -- เชื่อมต่อ signal ก่อน loop
             pcall(function()
                 riftSignalConn = RiftTimeLeft:GetPropertyChangedSignal("Value"):Connect(function()
                     if not autoRiftRun or not getgenv().autoRift then return end
-                    if inRift then return end  -- กำลังทำ Rift อยู่แล้ว ข้ามไป
+                    if inRift then return end
                     local tl = getRiftTimeLeft()
+
+                    -- [FIX] Trigger เมื่อ tl > 0 AND tl <= 15
+                    -- ไม่ trigger เมื่อ tl = 0 (reset)
                     if tl > 0 and tl <= 15 then
                         riftSignalFired = true
                     end
+                    lastTLSeen = tl
                 end)
             end)
 
@@ -2186,31 +2199,38 @@ Tabs.Gen:Toggle({
             while autoRiftRun do
                 if not getgenv().autoRift then break end
 
-                -- [FIX RIFT] ตรวจ cooldown — ป้องกัน re-trigger ทันที
-                local cooldownRemain = (lastRiftEnd + 8.0) - os.clock()
+                -- [FIX] ตรวจ cooldown หลังจบ Rift (ป้องกัน re-trigger ทันที)
+                local cooldownRemain = (lastRiftEnd + 5.0) - os.clock()
                 if cooldownRemain > 0 then
                     task.wait(math.min(cooldownRemain, 0.5))
                     continue
                 end
 
-                -- [FIX RIFT] ถ้า TimeLeft อยู่ใน window ตอนนี้เลย → เข้าได้ทันที
-                local tlNow = getRiftTimeLeft()
+                -- [FIX] ตรวจ window ปัจจุบันก่อนรอ signal
+                local tlNow   = getRiftTimeLeft()
                 local inWindow = tlNow > 0 and tlNow <= 15
 
                 if not inWindow then
-                    -- รอ signal (ปลุกทันทีเมื่อ TimeLeft เปลี่ยน)
+                    -- รอ signal ตื่น (poll 0.1s เป็น fallback)
                     riftSignalFired = false
-                    local waitDl = os.clock() + 1.0  -- poll ทุก 1s เป็น fallback
-                    while os.clock() < waitDl and not riftSignalFired and autoRiftRun do
-                        task.wait(0.05)
+                    while autoRiftRun and not riftSignalFired do
+                        task.wait(0.1)
+                        if not getgenv().autoRift then break end
+                        -- fallback: ตรวจเองด้วย
+                        local tl2 = getRiftTimeLeft()
+                        if tl2 > 0 and tl2 <= 15 then
+                            riftSignalFired = true; break
+                        end
                     end
-                    -- เช็คอีกครั้งหลัง signal / timeout
-                    tlNow = getRiftTimeLeft()
+                    if not autoRiftRun or not getgenv().autoRift then break end
+
+                    -- ยืนยันว่า window จริง
+                    tlNow    = getRiftTimeLeft()
                     inWindow = tlNow > 0 and tlNow <= 15
                     if not inWindow then continue end
                 end
 
-                -- [FIX RIFT] อยู่ใน window แล้ว → เริ่มกระบวนการ
+                -- ── อยู่ใน window แล้ว → เตรียมเข้า Rift ─────────────
                 riftSignalFired = false
 
                 -- หยุด Raid ถ้ากำลังอยู่
@@ -2228,11 +2248,12 @@ Tabs.Gen:Toggle({
                 summonPaused      = true
                 summonPauseReason = "rift"
 
-                -- [FIX RIFT] TP ทันทีถ้ายังไม่ได้อยู่ที่ Reaper Society
+                -- TP ไป Reaper Society ถ้ายังไม่อยู่ที่นั่น
                 if getStg() ~= "Reaper Society" then
                     local cancelRift = function() return not autoRiftRun or not getgenv().autoRift end
                     local ok = tpToRiftStage(cancelRift)
                     if not ok then
+                        -- TP ล้มเหลว → reset state แล้วรอรอบต่อไป
                         inRift = false; getgenv().doRift = false
                         lastRiftEnd = os.clock()
                         if summonPaused and summonPauseReason=="rift" then
@@ -2241,77 +2262,96 @@ Tabs.Gen:Toggle({
                         task.wait(3.0); continue
                     end
                     flushCaches()
-                    task.wait(0.4)
+                    task.wait(0.3)
                 end
 
-                -- [FIX RIFT] รอมอน spawn — ใช้ signal ChildAdded + poll fallback
+                -- ── รอ Rift mob spawn ที่ Reaper Society (สูงสุด 30s) ──
+                -- [FIX] ใช้ ChildAdded signal + poll fallback
+                -- ถ้าไม่เจอใน 30s → ออกไปทำงานอื่น
+                local mobFound       = false
                 local mobSpawnSignal = false
                 local mobSpawnConn   = nil
+
                 pcall(function()
                     mobSpawnConn = ServerTargets.ChildAdded:Connect(function(child)
-                        if child.Name:sub(1,5) == "Rifts" then mobSpawnSignal = true end
+                        if child.Name:sub(1,5) == "Rifts" then
+                            mobSpawnSignal = true
+                        end
                     end)
                 end)
 
-                local mobWaitDl = os.clock() + 25  -- รอสูงสุด 25s
+                -- [FIX] ตรวจ tl ระหว่างรอ: ถ้า tl=0 แสดงว่า server reset
+                -- ยังคงรออยู่ต่อ (spawn อาจมาหลัง tl=0 ได้)
+                local mobWaitDl = os.clock() + 30  -- 30s timeout ตามที่ user ระบุ
                 while os.clock() < mobWaitDl and autoRiftRun do
+                    if not getgenv().autoRift then break end
+
+                    -- Force scan ทุก 0.15s
                     lastTgtUp = 0
-                    if riftHasLiveMobs() or mobSpawnSignal then break end
+                    if riftHasLiveMobs() then
+                        mobFound = true; break
+                    end
+                    if mobSpawnSignal then
+                        -- signal fired → confirm ว่ามีจริง
+                        task.wait(0.1); lastTgtUp = 0
+                        if riftHasLiveMobs() then
+                            mobFound = true; break
+                        end
+                        mobSpawnSignal = false
+                    end
                     task.wait(0.15)
                 end
-                if mobSpawnConn then pcall(function() mobSpawnConn:Disconnect() end) end
-                mobSpawnSignal = false
 
-                -- double-confirm มอนมีจริง
-                lastTgtUp = 0; task.wait(0.1)
-
-                -- ── COMBAT PHASE v7 ──────────────────────────────────
-                -- [FIX] รอมอนอีก 1 รอบถ้าเพิ่งเข้า (spawn อาจช้า)
-                if not riftHasLiveMobs() then
-                    local extraWait = os.clock() + 8
-                    while os.clock() < extraWait and autoRiftRun do
-                        if riftHasLiveMobs() then break end
-                        task.wait(0.2)
-                    end
+                if mobSpawnConn then
+                    pcall(function() mobSpawnConn:Disconnect() end)
+                    mobSpawnConn = nil
                 end
 
-                if riftHasLiveMobs() then
-                    -- [FIX] Snap ตรงไปมอนก่อนเริ่ม + re-equip ถ้า dpsActive
-                    local initMob, initPart = findNearestRiftMob()
-                    if initPart then
-                        local hrpNow = getHRP()
-                        if hrpNow then
-                            for _ = 1, 3 do
-                                killVelocity(hrpNow)
-                                hrpNow.CFrame = CFrame.new(initPart.Position)
-                                task.wait(0.03)
-                            end
-                        end
+                -- [FIX] ถ้าไม่เจอมอนใน 30s → ออกจาก RS ไปทำงานอื่น
+                if not mobFound or not autoRiftRun then
+                    inRift = false; getgenv().doRift = false
+                    lastRiftEnd = os.clock()
+                    if summonPaused and summonPauseReason=="rift" then
+                        summonPaused=false; summonPauseReason=nil
                     end
-                    -- Fire initial attack ก่อน startCombat
-                    sendAtk(); sendClk()
-                    if initMob then
-                        pcall(function() R.Req:FireServer(initMob.Name, "Mouse") end)
-                    end
-
-                    startRiftCombat()
-
-                    local combatDl = os.clock() + 300
-                    local _noMobTick = 0
-                    while autoRiftRun and os.clock() < combatDl do
-                        task.wait(0.10)
-                        if not riftHasLiveMobs() then
-                            _noMobTick = _noMobTick + 1
-                            if _noMobTick >= 4 then
-                                -- confirm 4 ครั้ง (~0.4s) ว่าม็อบหมดจริง
-                                break
-                            end
-                        else
-                            _noMobTick = 0
-                        end
-                    end
-                    stopRiftCombat()
+                    -- TP กลับ Lobby
+                    tpToLobbyConfirmed()
+                    task.wait(2.0); continue
                 end
+
+                -- ── COMBAT PHASE v8 ──────────────────────────────────
+                -- Snap ตรงไปมอนทันที + re-equip ถ้า dpsActive
+                local initMob, initPart = findNearestRiftMob()
+                if initPart then
+                    local hrpNow = getHRP()
+                    if hrpNow then
+                        for _ = 1, 3 do
+                            killVelocity(hrpNow)
+                            hrpNow.CFrame = CFrame.new(initPart.Position)
+                            task.wait(0.03)
+                        end
+                    end
+                end
+                sendAtk(); sendClk()
+                if initMob then
+                    pcall(function() R.Req:FireServer(initMob.Name, "Mouse") end)
+                end
+
+                startRiftCombat()
+
+                -- รอมอนหมด
+                local combatDl   = os.clock() + 300
+                local _noMobTick = 0
+                while autoRiftRun and os.clock() < combatDl do
+                    task.wait(0.10)
+                    if not riftHasLiveMobs() then
+                        _noMobTick = _noMobTick + 1
+                        if _noMobTick >= 4 then break end  -- confirm 4 ครั้ง (~0.4s)
+                    else
+                        _noMobTick = 0
+                    end
+                end
+                stopRiftCombat()
 
                 -- ── EXIT PHASE ───────────────────────────────────────
                 doExitRift()
@@ -3218,33 +3258,118 @@ Tabs.Sum:Toggle({
             return
         end
         task.spawn(function()
-            local function cancelCheck() return not getgenv().autoSummon end
-            local targetMap = getgenv().selSumm or "Namex Planet"
-            local waitDl = os.clock() + 180
-            while os.clock() < waitDl do
-                if cancelCheck() then return end
-                if not isBusy() then break end
-                task.wait(0.3)
+            -- ── helpers ─────────────────────────────────────────────
+            local function cancelCheck()  return not getgenv().autoSummon end
+            local function isBlocked()    return isBusy() or summonPaused end
+
+            -- [FIX SUMMON] TP ไปแผนที่ไข่แบบ retry จนสำเร็จ (ไม่ใช้ waitReady)
+            local function tpToEggMap(targetMap)
+                if getStg() == targetMap then
+                    -- ยืนยัน character พร้อม
+                    local char = lp.Character
+                    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+                    if hrp and hum and hrp.Position.Y > -50 and hum.Health > 0 then
+                        return true
+                    end
+                end
+                local buf = teleportBuffers[targetMap]
+                if not buf then return false end
+
+                local deadline   = os.clock() + 30  -- รอสูงสุด 30s
+                local lastSend   = -99
+                local interval   = 1.0
+                local confirms   = 0
+
+                while os.clock() < deadline do
+                    if cancelCheck() then return false end
+                    -- หยุดรอถ้า busy (Raid/Rift/Boss กำลังทำ)
+                    if isBlocked() then
+                        task.wait(0.5); continue
+                    end
+                    local now = os.clock()
+                    if now - lastSend >= interval then
+                        R.Byte:FireServer(buf)
+                        lastSend = now
+                        interval = math.min(interval * 1.3, 4.0)
+                    end
+                    task.wait(0.10); lastStgUp = 0
+                    if getStg() == targetMap then
+                        local char = lp.Character
+                        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+                        if hrp and hum and hrp.Position.Y > -50 and hum.Health > 0 then
+                            confirms = confirms + 1
+                            if confirms >= 2 then return true end
+                            task.wait(0.12); continue
+                        end
+                    end
+                    confirms = 0
+                end
+                return false
             end
-            if cancelCheck() then return end
-            if getStg() ~= targetMap then
-                waitReady(targetMap, 20, teleportBuffers[targetMap], 2.5,
-                    function() return not getgenv().autoSummon or isBusy() end)
-                task.wait(0.5)
-            end
-            if cancelCheck() then return end
-            sendHatchStart()
+
+            -- ── MAIN LOOP ────────────────────────────────────────────
             while getgenv().autoSummon do
-                if isBusy() or summonPaused then
+                if cancelCheck() then break end
+
+                local targetMap = getgenv().selSumm or "Namex Planet"
+
+                -- รอให้ไม่ busy ก่อน
+                if isBlocked() then
                     pcall(sendHatchStop)
-                    while getgenv().autoSummon and (isBusy() or summonPaused) do
+                    while getgenv().autoSummon and isBlocked() do
                         task.wait(0.3)
                     end
-                    if not getgenv().autoSummon then break end
-                    sendHatchStart()
+                    if cancelCheck() then break end
                 end
-                task.wait(0.1)
+
+                -- TP ไปแผนที่ไข่
+                if getStg() ~= targetMap then
+                    pcall(sendHatchStop)
+                    local ok = tpToEggMap(targetMap)
+                    if cancelCheck() then break end
+                    if not ok then
+                        -- TP ล้มเหลว (อาจถูก block) → รอแล้วลองใหม่
+                        task.wait(2.0); continue
+                    end
+                    task.wait(0.4)
+                end
+
+                if cancelCheck() then break end
+
+                -- เริ่ม hatch
+                sendHatchStart()
+
+                -- [FIX SUMMON] keepalive loop: ส่ง hatch ซ้ำทุก 3s กัน timeout
+                -- + ตรวจ stage เปลี่ยน (Rift/Boss พา TP ออก → re-TP กลับ)
+                local _hatchKeepLast = os.clock()
+                while getgenv().autoSummon do
+                    task.wait(0.2)
+                    if cancelCheck() then break end
+
+                    -- หาก busy → หยุด hatch แล้ว break ออก loop นี้ (กลับไป main loop)
+                    if isBlocked() then
+                        pcall(sendHatchStop)
+                        break
+                    end
+
+                    -- หาก stage เปลี่ยน (ถูก TP ออกจากแผนที่) → หยุด hatch → break
+                    lastStgUp = 0
+                    if getStg() ~= targetMap then
+                        pcall(sendHatchStop)
+                        break
+                    end
+
+                    -- keepalive: re-send hatch ทุก 3s
+                    local now = os.clock()
+                    if now - _hatchKeepLast >= 3.0 then
+                        _hatchKeepLast = now
+                        sendHatchStart()
+                    end
+                end
             end
+
             pcall(sendHatchStop)
         end)
     end
