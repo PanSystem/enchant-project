@@ -1,8 +1,6 @@
 repeat task.wait() until game:IsLoaded()
 
--- ==========================================
--- [ เพิ่มส่วนรับค่าจาก Loader ที่ส่งมาให้ ]
--- ==========================================
+print("home")
 local loader_isPremium, loader_allowedGames, loader_hwid = ...
 if loader_isPremium == nil then 
     loader_isPremium = false 
