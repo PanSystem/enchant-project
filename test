@@ -806,7 +806,8 @@ local Tabs = {
     Set  = Window:Tab({Title = "Setting"}),
     Pre  = Window:Tab({Title = "Premium", Locked = not isPremiumUser})
 }
-
+Window:Tag({
+    Title = "v.0.0.1",Color = Color3.fromHex("#30ff6a"),Radius = 3,})
 Tabs.Set:Keybind({
     Title="Keybind", Desc="Keybind to open UI", Flag="UIKeybind", Value="RightAlt",
     Callback=function(v) Window:SetToggleKey(Enum.KeyCode[v]) end
