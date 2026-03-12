@@ -1,8 +1,5 @@
 repeat task.wait() until game:IsLoaded()
 
--- ==========================================
--- [ เพิ่มส่วนรับค่าจาก Loader ที่ส่งมาให้ ]
--- ==========================================
 local loader_isPremium, loader_allowedGames, loader_hwid = ...
 if loader_isPremium == nil then
     loader_isPremium = false
@@ -20,9 +17,6 @@ local HttpService         = game:GetService("HttpService")
 local lp      = Players.LocalPlayer
 local myName  = lp.Name
 
--- ==========================================
--- REMOTES & PATHS
--- ==========================================
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local R = {
     Req    = Remotes.Gameplays.Request,
@@ -62,9 +56,6 @@ if not SpawnedRiftsFolder then
     end)
 end
 
--- ==========================================
--- GLOBAL STATES
--- ==========================================
 getgenv().selMobs      = {}
 local selDict          = {}
 getgenv().selRaidMap   = "Namex Planet"
@@ -78,7 +69,7 @@ getgenv().doRift      = false
 getgenv().doBoss      = false
 getgenv().raidInP     = false
 getgenv().isDD        = false
-getgenv().riftSettling = false  -- Rift↔Raid handoff semaphore: true = rift กำลัง settle หลังจบ
+getgenv().riftSettling = false
 getgenv().colPurp  = false
 getgenv().bossWaiting = false
 
@@ -112,9 +103,6 @@ local dpsActive         = false
 local anyEggRef         = nil
 local anyEggInitialized = false
 
--- ==========================================
--- CONSTANTS
--- ==========================================
 local Const = {
     ATK_D      = 175,
     ATK_D_SQ   = 175 * 175,
@@ -131,9 +119,6 @@ local Const = {
     CACHE_CLR  = 3.0,
 }
 
--- ==========================================
--- GLOBAL RATE-LIMITED FIRE HELPERS
--- ==========================================
 local _lastAtk = 0
 local function sendAtk()
     local now = os.clock()
@@ -150,9 +135,6 @@ local function sendClk()
     R.Byte:FireServer(unpack(clickArgs))
 end
 
--- ==========================================
--- CACHE SYSTEM
--- ==========================================
 local mobNameCache    = {}
 local mobHumCache     = {}
 local mobDisplayCache = {}
@@ -191,9 +173,6 @@ local function normalizeMultiVal(v)
     return arr
 end
 
--- ==========================================
--- TELEPORT BUFFERS
--- ==========================================
 local teleportBuffers = {
     ["Lobby"]             = buffer.fromstring("\005\005\000Lobby\004\005\000Lobby"),
     ["Namex Planet"]      = buffer.fromstring("\004\f\000Namex Planet"),
@@ -212,9 +191,6 @@ lp.Idled:Connect(function()
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
 end)
 
--- ==========================================
--- HIGH-FREQUENCY CACHES
--- ==========================================
 local cachedHRP, lastHRPUp = nil, 0
 local function getHRP()
     local now = os.clock()
@@ -265,9 +241,6 @@ local function getStg()
     return cachedStage
 end
 
--- ==========================================
--- TELEPORT SYSTEM
--- ==========================================
 local RAY_P = RaycastParams.new()
 RAY_P.FilterType = Enum.RaycastFilterType.Exclude
 local grOff = { Const.V3Z,
@@ -367,9 +340,28 @@ local function tpForceSnap(part, yOffset)
     return (hrp.CFrame.Position - targetCF.Position).Magnitude <= 5.0
 end
 
--- ==========================================
--- MOB HELPERS
--- ==========================================
+local function stagedTpToBoss(targetPart, cancelFn)
+    if not targetPart or not targetPart.Parent then return false end
+    local tPos = targetPart.Position
+    local hrp  = getHRP(); if not hrp then return false end
+    local rawDir = hrp.Position - tPos
+    local dir    = rawDir.Magnitude > 1 and rawDir.Unit or Vector3.new(0,0,1)
+    local stages = {14, 8, 3, 0}
+    for _, dist in ipairs(stages) do
+        if cancelFn and cancelFn() then return false end
+        hrp = getHRP(); if not hrp then return false end
+        killVelocity(hrp)
+        if dist > 0 then
+            hrp.CFrame = CFrame.new(tPos + dir * dist + Vector3.new(0, 2, 0))
+        else
+            hrp.CFrame = CFrame.new(tPos + Vector3.new(0, 2, 0))
+        end
+        task.wait(0.10)
+    end
+    task.wait(0.15)
+    return true
+end
+
 local function isMobAlive(mob)
     if not mob or not mob.Parent then return false end
     local h = mobHumCache[mob]
@@ -425,9 +417,6 @@ local function getMobDisplayName(mob)
     return mn
 end
 
--- ==========================================
--- REQUEST / ATTACK SYSTEM (RATE-LIMITED)
--- ==========================================
 local pendingRequests = {}
 
 local function reqAttack(mob)
@@ -490,9 +479,6 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- ==========================================
--- UNIT ATTACK VERIFICATION
--- ==========================================
 local unitServerFolder    = nil
 local lastUnitFolderCheck = 0
 
@@ -522,9 +508,6 @@ local function countAttackingUnits()
     return count
 end
 
--- ==========================================
--- DPS PRECISION ENGINE STUB
--- ==========================================
 local dpsPrecisionConn = nil
 local dpsCurrentMob    = nil
 local dpsCurrentPart   = nil
@@ -540,9 +523,6 @@ local function stopDPSPrecision()
     dpsCurrentMob=nil; dpsCurrentPart=nil
 end
 
--- ==========================================
--- RAID SESSION
--- ==========================================
 local cachedSession, lastSessUp = nil, 0
 local function getRaidSession()
     local now = os.clock()
@@ -571,22 +551,13 @@ local function isBossEventActive()
        and BossesValue.Value~="" and BossesValue.Value~=" "
 end
 
--- ==========================================
--- PRIORITY HELPERS
--- ==========================================
 local function riftCancel()       return getgenv().doRift end
 local function bossOrRiftCancel() return getgenv().doRift or getgenv().doBoss end
 
--- ==========================================
--- RIFT TIME HELPERS
--- ==========================================
 local function getRiftTimeLeft()
     return RiftTimeLeft and RiftTimeLeft.Value or 0
 end
 
--- ==========================================
--- READINESS HELPERS
--- ==========================================
 local function isCharReady(expectedStage)
     if getStg()~=expectedStage then return false end
     local char=lp.Character; if not char then return false end
@@ -646,9 +617,6 @@ local function firePrompt(p)
     end)
 end
 
--- ==========================================
--- UNIT DATA TABLES
--- ==========================================
 local trD2G = {
     ["Assault I"]="Assault_1",["Assault II"]="Assault_2",["Assault III"]="Assault_3",
     ["Genius I"]="Genius_1",  ["Genius II"]="Genius_2",  ["Genius III"]="Genius_3",
@@ -701,9 +669,6 @@ for g, d in pairs(potD) do
 end
 local function lGr(s,v) local t=tVL[s]; return t and t[math.floor(v*10000+0.5)] or nil end
 
--- ==========================================
--- UNIT FOLDER HELPERS
--- ==========================================
 local function getUF_fn(fn)
     local inv=MyData:FindFirstChild("Inventory"); local u=inv and inv:FindFirstChild("Units")
     return u and u:FindFirstChild(fn) or nil
@@ -780,9 +745,6 @@ local function smartComboDone(fn,comboList)
     return subOk and primOk and (subRaw~=primRaw)
 end
 
--- ==========================================
--- UI INITIALIZATION
--- ==========================================
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 local Window = WindUI:CreateWindow({
     Title          = "Enchant Hub",
@@ -865,9 +827,6 @@ Tabs.Set:Button({Title="Copy My HWID", Callback=function()
     end)
 end})
 
--- ==========================================
--- UNITS TAB
--- ==========================================
 local uInfoPara = Tabs.Unit:Paragraph({Title="Rolling Unit", Desc="— No unit selected —", Icon="user"})
 local function sTN(r)
     if not r or r=="None" or r=="" then return "—" end
@@ -996,9 +955,6 @@ local function fullRefreshUnits()
 end
 Tabs.Unit:Button({Title="↺  Refresh Units", Callback=function() fullRefreshUnits() end})
 
--- ==========================================
--- AUTO TRAITS
--- ==========================================
 local TrSec=Tabs.Unit:Section({Title="Auto Traits", Opened=false})
 TrSec:Dropdown({Title="Sub Trait",     Flag="SubTrait",     Values=trL, Multi=true,
     Callback=function(v) getgenv().selSubT=normalizeMultiVal(v) end})
@@ -1207,9 +1163,6 @@ TrSec:Toggle({
     end
 })
 
--- ==========================================
--- AUTO TALENT
--- ==========================================
 local TalSec=Tabs.Unit:Section({Title="Auto Talent", Opened=false})
 TalSec:Dropdown({Title="Stats to Roll", Flag="TalentStats", Values=tSL, Multi=true,
     Callback=function(v) getgenv().selTalS=normalizeMultiVal(v) end})
@@ -1264,9 +1217,6 @@ TalSec:Toggle({
     end
 })
 
--- ==========================================
--- AUTO FARM
--- ==========================================
 Tabs.Gen:Section({Title="Auto Farm"})
 local amc={}
 local function getMonsterList()
@@ -1433,21 +1383,6 @@ Tabs.Gen:Toggle({
     end
 })
 
--- ████████████████████████████████████████████████████████████████████
--- DPS BOOST ENGINE v14 — Debounce-Scan (Clean & Efficient)
--- ████████████████████████████████████████████████████████████████████
---[[
-    หลักการทำงาน:
-    ─────────────────────────────────────────────────────────────────
-    • ทุก Heartbeat: GetChildren() ของ unit folder (Method Cache ระดับ micro)
-    • วนเช็ค Debounce ของทุก unit → ถ้า ALL = true → Fire DPS_EQ x2 ทันที
-    • ไม่มี unit → fallback fire DPS_EQ x2 ที่ dpsInputDelay
-    • AA keepalive: ป้องกัน Auto_Attacks ดับ (0.4s interval)
-    • ATK/CLK keepalive: ส่ง attack และ click packet แยก lane
-    • Mob snap + req: เมื่อ scanFn ใช้งานอยู่ (linked กับ AutoNearest/AutoSelected)
-    • Safe DMG: หยุด DPS_EQ 5s เมื่อค่า DPS เกิน limit
-    ─────────────────────────────────────────────────────────────────
-]]
 Tabs.Pre:Section({Title="DPS Boost"})
 
 local dpsCleanup
@@ -1459,14 +1394,19 @@ local safeDMGLimit   = 2000000
 local safeBoostUntil = 0
 getgenv().safeBoostActive = false
 
--- [🔥 Micro-Optimization: Method Caching]
--- ดึงฟังก์ชัน GetChildren / FindFirstChild ออกมาเก็บไว้
--- Direct Call ข้ามขั้นตอน metatable → ลด CPU overhead ระดับ micro-second
 local _GetChildren    = game.GetChildren
 local _FindFirstChild = game.FindFirstChild
 
-local DPS_REQ_RATE = 0.004  -- req rate สำหรับ mob snap
-local SNAP_SQ      = 100    -- 10 stud^2
+local _unitCache      = {}
+local _unitCacheValid = false
+local function _rebuildUC(f)
+    _unitCache = _GetChildren(f)
+    _unitCacheValid = true
+end
+local function _invalidUC() _unitCacheValid = false end
+
+local DPS_REQ_RATE = 0.004
+local SNAP_SQ      = 100
 
 local DS2 = {
     hb=nil, aaConn=nil, aaHB=nil, lastAA=0,
@@ -1477,7 +1417,6 @@ local DS2 = {
 }
 DS = DS2
 
--- ── AA Keepalive ──────────────────────────────────────────────────────
 local function getAABool() return MyData:FindFirstChild("Auto_Attacks") end
 local function isAAOn()    local v=getAABool(); return v~=nil and v.Value==true end
 local function doAAOn()    R.Byte:FireServer(AA_ON); DS2.lastAA=os.clock() end
@@ -1516,7 +1455,6 @@ local function stopAAKeepalive()
     doAAOff()
 end
 
--- ── Master Heartbeat (Debounce-Scan Engine) ───────────────────────────
 local function startMasterHB()
     if DS2.hb then DS2.hb:Disconnect() end
 
@@ -1527,7 +1465,6 @@ local function startMasterHB()
         if not hum or hum.Health <= 0 then return end
         local now = os.clock()
 
-        -- ── Lane 1: ATK + CLK keepalive ──────────────────────────────
         if now - _lastAtk >= Const.ATK_RATE then
             _lastAtk = now; R.Byte:FireServer(unpack(attackArgs))
         end
@@ -1535,8 +1472,6 @@ local function startMasterHB()
             _lastClk = now; R.Byte:FireServer(unpack(clickArgs))
         end
 
-        -- ── Lane 2: Debounce-Scan DPS ─────────────────────────────────
-        -- Safe Boost: ถ้า DPS เกิน limit → หยุดยิง DPS_EQ 5s
         if getgenv().safeBoostActive then
             local dpsObj = lp:FindFirstChild("DPS")
             if dpsObj and dpsObj.Value >= safeDMGLimit then
@@ -1547,12 +1482,11 @@ local function startMasterHB()
         if now >= safeBoostUntil then
             local plrFolder = unitServerFolder
             if plrFolder and plrFolder.Parent then
-                -- [🔥] Method Cache: ใช้ _GetChildren และ _FindFirstChild
-                local units    = _GetChildren(plrFolder)
+                if not _unitCacheValid then _rebuildUC(plrFolder) end
+                local units    = _unitCache
                 local numUnits = #units
 
                 if numUnits > 0 then
-                    -- เช็ค Debounce ทุก unit: ถ้า ALL = true → Double Strike
                     local allTrue = true
                     for i = 1, numUnits do
                         local deb = _FindFirstChild(units[i], "Debounce")
@@ -1561,12 +1495,10 @@ local function startMasterHB()
                         end
                     end
                     if allTrue then
-                        -- 🔥 Double Strike: 2 จังหวะใน 1 frame, แรงแต่ไม่ flood network
                         R.Byte:FireServer(DPS_EQ)
                         R.Byte:FireServer(DPS_EQ)
                     end
                 else
-                    -- ไม่มี unit → fallback fire ที่ dpsInputDelay
                     if now - DS2.lastNoFire >= dpsInputDelay then
                         DS2.lastNoFire = now
                         R.Byte:FireServer(DPS_EQ)
@@ -1574,7 +1506,6 @@ local function startMasterHB()
                     end
                 end
             else
-                -- folder ยังไม่พร้อม → fallback
                 if now - DS2.lastNoFire >= dpsInputDelay then
                     DS2.lastNoFire = now
                     R.Byte:FireServer(DPS_EQ)
@@ -1583,7 +1514,6 @@ local function startMasterHB()
             end
         end
 
-        -- ── Lane 3: Mob Snap + Req (เมื่อ scanFn ใช้งานอยู่) ─────────
         if not DS2.scanFn then return end
         DS2.chkTick = DS2.chkTick + 1
         if DS2.chkTick % 2 == 0 then
@@ -1616,12 +1546,12 @@ local function startMasterHB()
     end)
 end
 
--- ── dpsCleanup ────────────────────────────────────────────────────────
 local function dpsCleanup_impl()
     dpsActive    = false
     DS2.lastNoFire = 0
     DS2.mob=nil; DS2.part=nil; DS2.scanFn=nil
     safeBoostUntil = 0
+    _unitCacheValid = false; _unitCache = {}
 
     pcall(function() R.Byte:FireServer(DPS_EQ) end)
 
@@ -1633,7 +1563,6 @@ local function dpsCleanup_impl()
 end
 dpsCleanup = dpsCleanup_impl
 
--- ── Toggle ────────────────────────────────────────────────────────────
 Tabs.Pre:Input({
     Title="Dmg Delay", Desc="default 0.02",
     Value="0.02", Placeholder="0.005 – 2.0",
@@ -1666,7 +1595,6 @@ Tabs.Pre:Toggle({
         startAAKeepalive()
         startMasterHB()
 
-        -- หา unit folder แบบ async ไม่บล็อก engine
         task.spawn(function()
             if not dpsActive then return end
             local unitsRoot = WorldsFolder:FindFirstChild("Units")
@@ -1682,17 +1610,22 @@ Tabs.Pre:Toggle({
             if not plrFolder or not dpsActive then return end
 
             unitServerFolder = plrFolder
+            _rebuildUC(plrFolder)
 
-            -- ติดตาม folder เพิ่ม/ลบ unit (อัพเดต unitServerFolder เสมอ)
             local connAdded = plrFolder.ChildAdded:Connect(function()
-                unitServerFolder = plrFolder
+                unitServerFolder = plrFolder; _invalidUC()
+            end)
+            local connRemoved = plrFolder.ChildRemoved:Connect(function()
+                _invalidUC()
             end)
             if not dpsActive then
-                pcall(function() connAdded:Disconnect() end); return
+                pcall(function() connAdded:Disconnect() end)
+                pcall(function() connRemoved:Disconnect() end)
+                return
             end
             table.insert(DS2.folder, connAdded)
+            table.insert(DS2.folder, connRemoved)
 
-            -- sync scanFn กับ farm toggles ที่เปิดอยู่
             if getgenv().autoNearest then
                 DS2.scanFn = function() return getNearestMobUniversal(math.huge) end
             elseif getgenv().autoSel then
@@ -1714,9 +1647,6 @@ Tabs.Pre:Toggle({
     end
 })
 
--- ████████████████████████████████████████████████████████████████████
--- AUTO RIFT v4
--- ████████████████████████████████████████████████████████████████████
 Tabs.Gen:Section({Title="Auto Rift"})
 
 local RIFT_SESS_PREFIX = "Reaper Society_Rift_"
@@ -1977,7 +1907,7 @@ Tabs.Gen:Toggle({
             local function riftCleanup()
                 if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
                 getgenv().doRift      = false
-                getgenv().riftSettling = false  -- clear semaphore ในทุกกรณี abort
+                getgenv().riftSettling = false
                 if summonPaused and summonPauseReason == "rift" then
                     summonPaused = false; summonPauseReason = nil
                 end
@@ -2234,21 +2164,13 @@ Tabs.Gen:Toggle({
 
                 if cancelFn() then riftCleanup(); getgenv().riftSettling=false; setupWatchers(); continue end
 
-                -- ── Rift → Raid Handoff Protocol ─────────────────────────────────
-                -- 1. Set riftSettling BEFORE clearing doRift
-                --    → Raid wakes up แต่ raidYieldCheck() = true (riftSettling)
-                --    → ป้องกัน Raid ยิง preciseTpToStage ซ้อนกับ Rift's Lobby TP
-                -- 2. รอ player stable ที่ Lobby ก่อน
-                -- 3. ค่อย clear riftSettling → Raid จึงเดินหน้าได้
                 getgenv().riftSettling = true
 
                 if autoRiftRun and not cancelFn() then
                     lastStgUp = 0
-                    -- รอ player ถึง Lobby หลัง travel portal
                     if getStg() ~= "Lobby" then
                         waitReady("Lobby", 18, teleportBuffers["Lobby"], 1.0, cancelFn)
                     end
-                    -- triple-confirm: กันกรณี stage value เปลี่ยนแล้วยังไม่ stable จริง
                     task.wait(0.5); lastStgUp = 0
                     if isCharReady("Lobby") then
                         task.wait(0.3); lastStgUp = 0
@@ -2258,21 +2180,18 @@ Tabs.Gen:Toggle({
                     end
                 end
 
-                -- Manual cleanup (ไม่เรียก riftCleanup() เพราะจะล้าง riftSettling ก่อนเวลา)
                 if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
-                getgenv().doRift = false  -- ✦ Raid wakes, still blocked by riftSettling=true
+                getgenv().doRift = false
                 if summonPaused and summonPauseReason == "rift" then
                     summonPaused = false; summonPauseReason = nil
                 end
                 disconnectWatchers()
 
-                -- buffer: 1 tick ให้ Raid loop เห็น riftSettling ก่อน navigate
                 task.wait(0.3)
-                -- flush caches: ให้ทุกระบบอ่าน stage ใหม่สด
                 lastStgUp = 0; lastHRPUp = 0
                 task.wait(0.2); lastStgUp = 0
 
-                getgenv().riftSettling = false  -- ✅ Raid ปลอดภัยเดินหน้าได้แล้ว
+                getgenv().riftSettling = false
 
                 if autoRiftRun then setupWatchers() end
             end
@@ -2288,11 +2207,8 @@ Tabs.Gen:Toggle({
     end
 })
 
-end -- end DPS/Rift block
+end
 
--- ==========================================
--- ABANDON VILLAGE (Boss Fight)
--- ==========================================
 Tabs.Gen:Section({Title="Abandon Village"})
 
 local function getBossMobInStage()
@@ -2543,8 +2459,14 @@ Tabs.Gen:Toggle({
                         task.wait(0.8); continue
                     end
 
-                    killVelocity(getHRP() or Instance.new("Part"))
-                    tpTarget(doorPart); task.wait(0.4)
+                    if not stagedTpToBoss(doorPart, cancelBoss) then
+                        if attempt < MAX_RETRY then
+                            R.Byte:FireServer(teleportBuffers["Demon Forest"]); lastStgUp=0
+                            waitCharReady("Demon Forest", cancelBoss, 12, 2)
+                            task.wait(0.8)
+                        end
+                        continue
+                    end
                     if cancelBoss() then break end
 
                     if waitBossFightUI(5.0, cancelBoss) then foundUI=true; break end
@@ -2656,25 +2578,6 @@ Tabs.Gen:Toggle({
     end
 })
 
--- ==========================================
--- AUTO RAID v4 — Fixed POST_FIGHT & WAIT_EXIT
--- ==========================================
---[[
-    v4 Fix Summary:
-    ─────────────────────────────────────────────────────────────────
-    POST_FIGHT:
-      • รอ session หายจริง (loop + force Leave, max 8s) หลัง exitRaid()
-      • task.wait(0.8) buffer ให้ stage transition เสร็จก่อน
-      • ถึงค่อยส่ง → WAIT_EXIT
-
-    WAIT_EXIT:
-      • Fast-path: ถ้า getStg()==home แล้ว → double-confirm 0.4s → FIND_PAD ทันที (ไม่ยิง TP ซ้ำ)
-      • Slow-path: ใช้ preciseTpToStage() [retry+confirm ในตัว]
-      • หลัง TP สำเร็จ → buffer 0.5s → ตรวจ stable → FIND_PAD
-      • continue ท้าย block ป้องกัน fallthrough
-      • timeout เพิ่มเป็น 35s (จากเดิม 25s)
-    ─────────────────────────────────────────────────────────────────
-]]
 Tabs.Gen:Section({Title="Raid System"})
 Tabs.Gen:Dropdown({Title="Raid Map", Flag="RaidMap",
     Values={"Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town","Reaper Society","Double Dungeons"},
@@ -2723,8 +2626,6 @@ local function countRaidMobs(forceRefresh)
     return count
 end
 
--- raidYieldCheck: หยุด Raid operations เมื่อ Rift กำลังทำงาน หรือ กำลัง settle หลังจบ
--- ป้องกัน Raid ยิง TP ซ้อนขณะ Rift กำลัง handoff stage
 local function raidYieldCheck() return getgenv().doRift or getgenv().riftSettling end
 
 local function collectBoxes()
@@ -2841,7 +2742,6 @@ local function exitRaid()
     end
 end
 
--- ── preciseTpToStage ─────────────────────────────────────────────────
 local function preciseTpToStage(targetStage, cancelFn, timeout)
     timeout = timeout or 20
     lastStgUp = 0
@@ -2896,7 +2796,6 @@ local function preciseTpToStage(targetStage, cancelFn, timeout)
     return false
 end
 
--- ── precisePadSnap ───────────────────────────────────────────────────
 local function precisePadSnap(pad)
     if not pad or not pad.Parent then return false end
     local center = pad:FindFirstChild("Centers") or pad:FindFirstChildWhichIsA("BasePart")
@@ -2927,7 +2826,6 @@ local function precisePadSnap(pad)
     return (hrp.Position - targetPos).Magnitude <= 6.0
 end
 
--- ── isHomeStageReady: helper ตรวจ character stable ──────────────────
 local function isHomeStageReady(targetStage)
     lastStgUp = 0
     if getStg() ~= targetStage then return false end
@@ -3052,39 +2950,29 @@ Tabs.Gen:Toggle({
                 if not getgenv().autoRaid then break end
 
                 if getgenv().doRift or getgenv().riftSettling then
-                    -- ── Raid หยุดรอ Rift ────────────────────────────────────────
-                    -- Step 1: abort raid session ถ้ากำลังอยู่ใน session
                     abortRaid(); stopSessionWatch(); stopMobWatch()
 
-                    -- Step 2: รอ doRift หาย (Rift จบการต่อสู้)
                     while getgenv().autoRaid and getgenv().doRift do task.wait(0.10) end
 
-                    -- Step 3: รอ riftSettling หาย (Rift handoff เสร็จ, player stable)
-                    -- raidYieldCheck() = true ตลอดช่วงนี้ → ป้องกัน TP ซ้อน
                     local settleDl = os.clock() + 8.0
                     while getgenv().autoRaid and getgenv().riftSettling and os.clock() < settleDl do
                         task.wait(0.10)
                     end
-                    -- Safety: ถ้า settling นาน > 8s ให้ clear เองเพื่อไม่ hang
                     if getgenv().riftSettling then
                         getgenv().riftSettling = false
                         task.wait(0.3)
                     end
 
-                    -- Step 4: Flush caches + รอ stage stable
                     lastStgUp = 0; lastHRPUp = 0
                     task.wait(0.25); lastStgUp = 0
 
                     if getgenv().autoRaid then
-                        -- อ่าน stage จริง (cache-busted)
                         local curStage = getStg()
                         local homeStage = sg()
                         if curStage == homeStage then
-                            -- ✅ อยู่ home แล้ว → ข้าม TELEPORT ไป FIND_PAD เลย
                             if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
                             cAtt=0; setRaidSt("FIND_PAD")
                         else
-                            -- อยู่ stage อื่น → TP กลับ home
                             setRaidSt("TELEPORT")
                         end
                         startSessionWatch(); startMobWatch()
@@ -3092,9 +2980,6 @@ Tabs.Gen:Toggle({
                     continue
                 end
 
-                -- ════════════════════════════════════════════════
-                -- STATE MACHINE
-                -- ════════════════════════════════════════════════
                 if st=="IDLE" then
                     inCombat=false; getgenv().raidInP=false; raidMobCountAt=-1
                     forceSessionRefresh(); task.wait(0.04)
@@ -3168,18 +3053,13 @@ Tabs.Gen:Toggle({
                     cAtt=0; sessionJustCreated=false; setRaidSt("CREATE")
 
                 elseif st=="CREATE" then
-                    if getgenv().autoBoss and isBossEventActive()
-                       and (os.clock()-(getgenv().lastBossKill or 0)>=25) then
-                        setRaidSt("FIND_PAD"); continue
-                    end
-
-                    if stateAge() > 15 then
+                    if stateAge() > 20 then
                         cAtt = 0; setRaidSt("TELEPORT"); continue
                     end
 
                     forceSessionRefresh()
                     if getRaidSession() or sessionJustCreated then
-                        sessionJustCreated = false; setRaidSt("WAIT_ENTER"); continue
+                        sessionJustCreated = false; cAtt = 0; setRaidSt("WAIT_ENTER"); continue
                     end
 
                     if cAtt == 0 then
@@ -3187,30 +3067,28 @@ Tabs.Gen:Toggle({
                         if getStg() ~= sg() then setRaidSt("TELEPORT"); continue end
                     end
 
-                    if os.clock() - lastCreateTime >= 0.05 then
-                        lastCreateTime = os.clock()
-                        R.Raids:FireServer(
-                            getgenv().isDD and "Double Dungeons" or getgenv().selRaidMap,
-                            getgenv().selRaidDiff)
+                    local now0 = os.clock()
+                    if now0 - lastCreateTime >= 0.022 then
+                        lastCreateTime = now0
+                        local mapName = getgenv().isDD and "Double Dungeons" or getgenv().selRaidMap
+                        R.Raids:FireServer(mapName, getgenv().selRaidDiff)
                         cAtt = cAtt + 1
                     end
 
-                    local cDl = os.clock() + 0.6
+                    local cDl = os.clock() + 0.55
                     while os.clock() < cDl do
                         if raidYieldCheck() then break end
                         if sessionJustCreated then
-                            sessionJustCreated = false; setRaidSt("WAIT_ENTER"); break
+                            sessionJustCreated = false; cAtt = 0; setRaidSt("WAIT_ENTER"); break
                         end
                         forceSessionRefresh()
-                        if getRaidSession() then setRaidSt("WAIT_ENTER"); break end
-                        task.wait(0.008)
+                        if getRaidSession() then cAtt = 0; setRaidSt("WAIT_ENTER"); break end
+                        task.wait(0.005)
                     end
 
                     if st ~= "WAIT_ENTER" then
-                        if cAtt >= 10 then
+                        if cAtt >= 18 then
                             cAtt = 0; setRaidSt("TELEPORT")
-                        else
-                            task.wait(0.01)
                         end
                     end
 
@@ -3268,9 +3146,6 @@ Tabs.Gen:Toggle({
                         setRaidSt("POST_FIGHT")
                     end
 
-                -- ════════════════════════════════════════════════════════════
-                -- [v4 FIX] POST_FIGHT: รอ session หาย + buffer ก่อน WAIT_EXIT
-                -- ════════════════════════════════════════════════════════════
                 elseif st=="POST_FIGHT" then
                     if stateAge()>30 then abortRaid(); continue end
                     if raidYieldCheck() then abortRaid(); continue end
@@ -3283,30 +3158,23 @@ Tabs.Gen:Toggle({
                     forceSessionRefresh(); raidMobCountAt = -1
                     if countRaidMobs(true)>0 then setRaidSt("FIGHTING"); continue end
 
-                    -- Exit raid (portal / stealth)
                     exitRaid()
                     if raidYieldCheck() then abortRaid(); continue end
 
-                    -- ── รอให้ session หายจริงๆ ก่อน ──────────────────────────
-                    -- เหตุผล: exitRaid ผ่าน portal → เกม server จะ TP ผู้เล่นออกเอง
-                    -- ถ้าเราส่ง TP ซ้ำใน WAIT_EXIT ก่อน session หาย → double-TP desync
                     do
                         local sessWaitDl = os.clock() + 8
                         while os.clock() < sessWaitDl do
                             forceSessionRefresh()
                             if not getRaidSession() then break end
-                            -- ยัง session อยู่ → force leave + รอ
                             pcall(function() R.RaidsL:FireServer("Leave") end)
                             task.wait(0.2)
                         end
-                        -- ถ้า 8s แล้วยังอยู่ → force leave ครั้งสุดท้าย
                         if getRaidSession() then
                             pcall(function() R.RaidsL:FireServer("Leave") end)
                             task.wait(0.3); forceSessionRefresh()
                         end
                     end
 
-                    -- buffer: ให้ stage transition + character load เสร็จก่อน
                     task.wait(0.8); lastStgUp = 0
 
                     getgenv().raidInP = false
@@ -3316,9 +3184,6 @@ Tabs.Gen:Toggle({
                     cAtt=0; sessionJustCreated=false
                     setRaidSt("WAIT_EXIT")
 
-                -- ════════════════════════════════════════════════════════════
-                -- [v4 FIX] WAIT_EXIT: double-confirm + preciseTp + buffer
-                -- ════════════════════════════════════════════════════════════
                 elseif st=="WAIT_EXIT" then
                     if stateAge()>35 then
                         getgenv().raidInP=false
@@ -3330,12 +3195,9 @@ Tabs.Gen:Toggle({
                     inCombat=false
                     local targetStage = sg()
 
-                    -- ── Fast-path: POST_FIGHT buffer ทำให้ stage อาจ stable แล้ว ──
-                    -- double-confirm 0.4s กัน false positive จาก stage transition กลาง
                     if isHomeStageReady(targetStage) then
                         task.wait(0.4); lastStgUp = 0
                         if isHomeStageReady(targetStage) then
-                            -- อยู่ home stage จริง → ไม่ยิง TP ซ้ำ
                             getgenv().raidInP=false
                             if summonPaused and summonPauseReason=="raid" then
                                 summonPaused=false; summonPauseReason=nil
@@ -3346,14 +3208,11 @@ Tabs.Gen:Toggle({
                         end
                     end
 
-                    -- ── Slow-path: ยังไม่ถึง home → preciseTpToStage ──────────
-                    -- ฟังก์ชันนี้มี retry+confirm ในตัว ป้องกัน TP ซ้อนกัน
                     local tpOk = preciseTpToStage(targetStage, cancelRaid, 25)
                     if not getgenv().autoRaid then break end
                     if raidYieldCheck() then abortRaid(); continue end
 
                     if tpOk then
-                        -- buffer หลัง TP: รอ character load stable
                         task.wait(0.5); lastStgUp = 0
                         if isHomeStageReady(targetStage) then
                             getgenv().raidInP=false
@@ -3364,14 +3223,12 @@ Tabs.Gen:Toggle({
                             if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
                             cAtt=0; setRaidSt("FIND_PAD")
                         else
-                            -- character ยังไม่ stable → กลับ IDLE ให้รอบถัดไปจัดการ
                             setRaidSt("IDLE")
                         end
                     else
-                        -- preciseTp timeout → IDLE รอบถัดไป
                         setRaidSt("IDLE")
                     end
-                    continue  -- ป้องกัน fallthrough ไป RunService.Heartbeat:Wait() ก่อนกำหนด
+                    continue
                 end
                 RunService.Heartbeat:Wait()
             end
@@ -3380,20 +3237,14 @@ Tabs.Gen:Toggle({
     end
 })
 
-end -- end Raid
+end
 
--- ==========================================
--- TELEPORT TAB
--- ==========================================
 Tabs.Tele:Section({Title="World Teleport"})
 Tabs.Tele:Dropdown({Title="Select World", Flag="TeleportWorld",
     Values={"Lobby","Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town","Reaper Society"},
     Value="Lobby", Callback=function(v) getgenv().selTp=v end})
 Tabs.Tele:Button({Title="Teleport", Callback=function() sendTeleport(getgenv().selTp); lastStgUp=0 end})
 
--- ==========================================
--- AUTO SUMMON
--- ==========================================
 Tabs.Sum:Section({Title="Auto Summon Egg"})
 
 local function sendHatchStart()  R.Hatch:FireServer(true)  end
@@ -3566,9 +3417,6 @@ Tabs.Sum:Toggle({
     end
 })
 
--- ==========================================
--- MISC
--- ==========================================
 Tabs.Misc:Section({Title="Miscellaneous"})
 Tabs.Misc:Button({Title="Redeem Codes", Callback=function()
     for _,c in next,{"1MVISITLETSGOO","SORRYFORAUTOSUMMONS","Sorry4Delay","RELEASED!"} do
@@ -3606,9 +3454,6 @@ lp.CharacterAdded:Connect(function()
 end)
 Tabs.Misc:Button({Title="Toggle Name Spoofer", Callback=function() nSEnb=not nSEnb; updateNameSpoof() end})
 
--- ==========================================
--- DEATH RECOVERY SYSTEM
--- ==========================================
 local RECOVERABLE_FLAGS = {
     "AutoClick", "AutoNearest", "AutoSelected",
     "DPSBoost", "SafeBoost",
@@ -3698,9 +3543,6 @@ lp.CharacterRemoving:Connect(function()
     end)
 end)
 
--- ==========================================
--- AUTO-LOAD DEFAULT CONFIG
--- ==========================================
 task.spawn(function()
     task.wait(2)
     pcall(function()
