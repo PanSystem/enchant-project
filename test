@@ -57,7 +57,7 @@ if not SpawnedRiftsFolder then
 end
 
 -- ============================================================
--- PRIORITY MANAGER
+-- PRIORITY MANAGER  (Rift=5 > Raid=3 > Boss=4 > Farm=2 > Summon=1)
 -- ============================================================
 local Priority = {
     NONE  = 0,
@@ -69,19 +69,28 @@ local Priority = {
 }
 
 local State = {
-    currentPriority = Priority.NONE,
-    riftActive      = false,
-    riftDetected    = false,
-    bossActive      = false,
-    bossReady       = false,
-    raidActive      = false,
-    raidFinishing   = false,
-    riftSettling    = false,
+    currentPriority  = Priority.NONE,
+    -- Rift
+    riftActive       = false,
+    riftDetected     = false,
+    riftSettling     = false,
+    -- Boss
+    bossActive       = false,
+    bossReady        = false,
+    -- Raid
+    raidActive       = false,
+    raidFinishing    = false,
+    raidInProgress   = false,   -- ← NEW: true while ANY raid state is running
 }
 
 local function setPriority(p) State.currentPriority = p end
 local function hasPriority(p) return State.currentPriority <= p end
 local function priorityAtLeast(p) return State.currentPriority >= p end
+
+-- Convenience helpers
+local function isRiftBusy()   return State.riftActive or State.riftDetected or State.riftSettling end
+local function isRaidBusy()   return State.raidActive or State.raidFinishing or State.raidInProgress end
+local function isBossRunning() return State.bossActive end
 
 -- ============================================================
 -- SELECTORS & GLOBAL ENV
@@ -556,7 +565,7 @@ end
 local cachedSession, lastSessUp = nil, 0
 local function getRaidSession()
     local now = os.clock()
-    if now-lastSessUp>0.15 then
+    if now-lastSessUp>0.10 then   -- ← faster refresh 0.15→0.10
         lastSessUp=now; cachedSession=nil
         if RaidsVisual then
             for _, f in next, RaidsVisual:GetChildren() do
@@ -1041,21 +1050,6 @@ local function waitTalentChange(fn, stat, oldVal, runFlagFn, timeout)
     return changed
 end
 
-local function rollSlotUntilDone(fn, slotKey, targetList, runFlagFn)
-    local ra = {}
-    for _,d in ipairs(targetList) do ra[#ra+1] = trD2G[d] or d end
-    while runFlagFn() do
-        local f = getUF_fn(fn)
-        if not f or f.Name ~= fn then return end
-        local to = f:FindFirstChild(slotKey.."_Trait")
-        if not to or not to:IsA("StringValue") then return end
-        if cTrS_fn(fn, slotKey, targetList) then return end
-        local old = to.Value
-        R.Traits:FireServer(fn, slotKey, ra, false)
-        waitTraitChange(fn, slotKey, old, runFlagFn, 1.5)
-    end
-end
-
 TrSec:Toggle({
     Title="Auto Traits", Flag="AutoTraits", Value=false,
     Callback=function(state)
@@ -1447,7 +1441,7 @@ Tabs.Gen:Toggle({
 })
 
 -- ============================================================
--- DPS BOOST (Premium) — APEX EDITION
+-- DPS BOOST (Premium)
 -- ============================================================
 Tabs.Pre:Section({Title="DPS Boost"})
 
@@ -1639,9 +1633,7 @@ local function startMasterHB()
     local _killVel = killVelocity
     local _getHRP  = getHRP
     local _alive   = isMobAlive
-    local _validMN = getValidMobName
     local _clock   = os.clock
-    local _mobNC   = mobNameCache
     local _CF      = CFrame.new
 
     local SNAP_SQ  = 9
@@ -1805,13 +1797,9 @@ Tabs.Pre:Toggle({
 
 end -- end DPS Boost block
 
--- ==========================================
--- RAID SYSTEM UI
--- ==========================================
-Tabs.Gen:Section({Title="Raid System"})
-Tabs.Gen:Dropdown({Title="Raid Map", Flag="RaidMap",
-    Values={"Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town","Reaper Society","Double Dungeons"},
-    Callback=function(v) getgenv().selRaidMap=v; getgenv().isDD=(v=="Double Dungeons") end})
+-- ============================================================
+-- RAID OPTIONS (UI only — Raid loop below)
+-- ============================================================
 Tabs.Gen:Dropdown({Title="Difficulty", Flag="RaidDiff",
     Values={"Easy","Medium","Hard","Nightmare"},
     Callback=function(v) getgenv().selRaidDiff=v end})
@@ -1822,6 +1810,9 @@ Tabs.Gen:Dropdown({Title="Mode Exit", Flag="RaidExitMode",
     Values={"Normal","Stealth"}, Value="Normal",
     Callback=function(v) getgenv().raidExitMode=v end})
 
+-- ============================================================
+-- AUTO RAID — IMPROVED & STABLE
+-- ============================================================
 do
 local function getLobbyPads()
     local pads={}
@@ -1842,24 +1833,27 @@ local function getDoubleDungeonPad()
     return (sp and isPadAvailable(sp)) and sp or nil
 end
 
+-- ── Mob counting (with force-refresh) ──────────────────────
 local raidMobCountCache, raidMobCountAt = 0, -1
 local function countRaidMobs(forceRefresh)
     local now=os.clock()
-    if not forceRefresh and (now-raidMobCountAt)<0.03 then return raidMobCountCache end
+    if not forceRefresh and (now-raidMobCountAt)<0.05 then return raidMobCountCache end
     if forceRefresh then forceSessionRefresh() end
     lastTgtUp=0
     local count=0
-    for _,v in next,getSTgts() do
+    for _,v in next,ServerTargets:GetChildren() do
         if isRaidMob(v) and v.Name:sub(1,5)=="Raids" then count=count+1 end
     end
     raidMobCountCache=count; raidMobCountAt=now
     return count
 end
 
+-- ── Rift interrupt guard ────────────────────────────────────
 local function raidYieldCheck()
     return State.riftActive or State.riftSettling
 end
 
+-- ── Collect reward boxes ────────────────────────────────────
 local function collectBoxes()
     if raidYieldCheck() then return end
     local sessionFolder = nil
@@ -1937,6 +1931,7 @@ local function collectBoxes()
     end
 end
 
+-- ── Exit raid (Normal or Stealth) ──────────────────────────
 local function isRaidUIGone()
     local pg = lp:FindFirstChild("PlayerGui")
     local gm = pg and pg:FindFirstChild("Gamemodes")
@@ -1991,14 +1986,14 @@ local function exitRaid()
             sendTeleport("Lobby"); task.wait(0.5)
             for _=1,3 do
                 if isRaidUIGone() then break end
-                task.wait(0.5)
-                sendTeleport("Lobby"); task.wait(0.5)
+                task.wait(0.5); sendTeleport("Lobby"); task.wait(0.5)
             end
             break
         end
     end
 end
 
+-- ── Precise teleport to stage ──────────────────────────────
 local function preciseTpToStage(targetStage, cancelFn, timeout)
     timeout = timeout or 20
     lastStgUp = 0
@@ -2017,7 +2012,7 @@ local function preciseTpToStage(targetStage, cancelFn, timeout)
 
     local deadline = os.clock() + timeout
     local lastSend = -99
-    local interval = 0.6
+    local interval = 0.5
     local confirms = 0
 
     while os.clock() < deadline do
@@ -2031,7 +2026,7 @@ local function preciseTpToStage(targetStage, cancelFn, timeout)
             interval = math.min(interval * 1.3, 3.0)
         end
 
-        task.wait(0.06); lastStgUp = 0
+        task.wait(0.05); lastStgUp = 0
 
         if getStg() == targetStage then
             local char = lp.Character
@@ -2048,6 +2043,7 @@ local function preciseTpToStage(targetStage, cancelFn, timeout)
     return false
 end
 
+-- ── Snap player onto pad center ────────────────────────────
 local function precisePadSnap(pad)
     if not pad or not pad.Parent then return false end
     local center = pad:FindFirstChild("Centers") or pad:FindFirstChildWhichIsA("BasePart")
@@ -2055,9 +2051,8 @@ local function precisePadSnap(pad)
 
     local targetPos = center.Position + Vector3.new(0, 2, 0)
     local targetCF  = CFrame.new(targetPos)
-    local maxRetry  = 5
 
-    for i = 1, maxRetry do
+    for i = 1, 5 do
         local hrp = getHRP(); if not hrp then return false end
         killVelocity(hrp); hrp.CFrame = targetCF
         task.wait(0.06)
@@ -2080,6 +2075,18 @@ local function isHomeStageReady(targetStage)
     return hrp and hum and hrp.Position.Y > -50 and hum.Health > 0
 end
 
+-- ── Helper: wait for rift + rift-settling to clear ─────────
+local function waitRiftClear(cancelFn, timeout)
+    local dl = os.clock() + (timeout or 300)
+    while os.clock() < dl do
+        if cancelFn and cancelFn() then return false end
+        if not State.riftActive and not State.riftSettling then return true end
+        task.wait(0.15)
+    end
+    return not State.riftActive and not State.riftSettling
+end
+
+-- ── MAIN RAID LOOP ──────────────────────────────────────────
 Tabs.Gen:Toggle({
     Title="Auto Raid", Flag="AutoRaid", Value=false,
     Callback=function(state)
@@ -2087,85 +2094,106 @@ Tabs.Gen:Toggle({
         if not state then
             if Conns.raid then Conns.raid:Disconnect(); Conns.raid=nil end
             getgenv().raidInP=false; getgenv().raidSt="IDLE"
-            State.raidActive   = false
+            State.raidActive    = false
             State.raidFinishing = false
+            State.raidInProgress = false
             raidMobCountAt=-1
             if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
             return
         end
+
         task.spawn(function()
-            local st="IDLE"
-            local pads,pIdx,cAtt={},1,0
-            local inCombat=false
-            local stateEnterTime=os.clock()
-            local lastCreateTime=0
-            local cTgt,cPart=nil,nil
-            local sessionCreated=false
-            local createAttempts=0
+            -- ─ state machine variables ─
+            local st = "IDLE"
+            local pads, pIdx, cAtt = {}, 1, 0
+            local inCombat = false
+            local stateEnterTime = os.clock()
+            local lastCreateTime = 0
+            local cTgt, cPart    = nil, nil
+            local sessionCreated = false
+            local createAttempts = 0
 
+            -- helpers
             local function setRaidSt(s)
-                st=s; getgenv().raidSt=s; stateEnterTime=os.clock()
-                State.raidActive   = (s == "FIGHTING" or s == "WAIT_ENTER" or s == "POST_FIGHT")
-                State.raidFinishing = (s == "POST_FIGHT" or s == "WAIT_EXIT")
+                st = s; getgenv().raidSt = s; stateEnterTime = os.clock()
+                -- State flags: active during fight states; finishing during cleanup
+                State.raidActive     = (s == "FIGHTING" or s == "WAIT_ENTER" or s == "POST_FIGHT")
+                State.raidFinishing  = (s == "POST_FIGHT" or s == "WAIT_EXIT")
+                State.raidInProgress = (s ~= "IDLE")
             end
-            local function stateAge() return os.clock()-stateEnterTime end
-
-            local function sg() return getgenv().isDD and "Dungeons Town" or "Lobby" end
+            local function stateAge() return os.clock() - stateEnterTime end
+            local function sg()       return getgenv().isDD and "Dungeons Town" or "Lobby" end
+            local function cancelRaid() return not getgenv().autoRaid end
 
             local function cleanupCombat()
-                inCombat=false
-                if Conns.raid then Conns.raid:Disconnect(); Conns.raid=nil end
-                cTgt=nil; cPart=nil; raidMobCountAt=-1
+                inCombat = false
+                if Conns.raid then Conns.raid:Disconnect(); Conns.raid = nil end
+                cTgt = nil; cPart = nil; raidMobCountAt = -1
             end
-            local function abortRaid()
+
+            local function fullReset()
                 cleanupCombat()
                 pcall(function() R.RaidsL:FireServer("Leave") end)
-                task.wait(0.12); getgenv().raidInP=false
-                State.raidActive   = false
-                State.raidFinishing = false
-                sessionCreated=false
-                createAttempts=0
-                if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
+                task.wait(0.12)
+                getgenv().raidInP     = false
+                State.raidActive      = false
+                State.raidFinishing   = false
+                State.raidInProgress  = false
+                sessionCreated        = false
+                createAttempts        = 0
+                if summonPaused and summonPauseReason == "raid" then
+                    summonPaused = false; summonPauseReason = nil
+                end
                 setRaidSt("IDLE")
             end
 
+            -- ─ Heartbeat combat loop ─
             local function startRaidCombat()
                 if Conns.raid then Conns.raid:Disconnect() end
-                inCombat=true; cTgt=nil; cPart=nil; raidMobCountAt=-1
-                Conns.raid=RunService.Heartbeat:Connect(function()
+                inCombat = true; cTgt = nil; cPart = nil; raidMobCountAt = -1
+                Conns.raid = RunService.Heartbeat:Connect(function()
                     if not inCombat or not getgenv().autoRaid then
-                        if Conns.raid then Conns.raid:Disconnect(); Conns.raid=nil end; return
+                        if Conns.raid then Conns.raid:Disconnect(); Conns.raid = nil end
+                        return
                     end
-                    if raidYieldCheck() then inCombat=false; return end
+                    if raidYieldCheck() then inCombat = false; return end
                     sendAtk()
+
+                    -- validate current target
                     if cTgt and cPart then
                         if not cTgt.Parent or not isMobAlive(cTgt) or not isRaidMob(cTgt) then
-                            cTgt=nil; cPart=nil
+                            cTgt = nil; cPart = nil
                         end
                     end
+
+                    -- scan for nearest raid mob
                     if not cTgt then
-                        local hrp=getHRP()
+                        local hrp = getHRP()
                         if hrp then
-                            local hPos=hrp.Position; local bestSq=math.huge
-                            for _,v in next,getSTgts() do
-                                if isRaidMob(v) and v.Name:sub(1,5)=="Raids" then
-                                    local pt=v.PrimaryPart or v:FindFirstChild("HumanoidRootPart")
+                            local hPos = hrp.Position; local bestSq = math.huge
+                            lastTgtUp = 0
+                            for _, v in next, ServerTargets:GetChildren() do
+                                if isRaidMob(v) and v.Name:sub(1,5) == "Raids" then
+                                    local pt = v.PrimaryPart or v:FindFirstChild("HumanoidRootPart")
                                     if pt then
-                                        local dx=hPos.X-pt.Position.X; local dz=hPos.Z-pt.Position.Z
-                                        local dsq=dx*dx+dz*dz
-                                        if dsq<bestSq then bestSq=dsq; cTgt=v; cPart=pt end
+                                        local dx = hPos.X - pt.Position.X
+                                        local dz = hPos.Z - pt.Position.Z
+                                        local dsq = dx*dx + dz*dz
+                                        if dsq < bestSq then bestSq = dsq; cTgt = v; cPart = pt end
                                     end
                                 end
                             end
                         end
                     end
+
+                    -- teleport + attack
                     if cTgt and cPart then
-                        local hrp=getHRP()
+                        local hrp = getHRP()
                         if hrp then
-                            local mPos=cPart.Position
-                            local dv=hrp.Position-mPos
-                            if dv.X*dv.X+dv.Y*dv.Y+dv.Z*dv.Z > 400 then
-                                killVelocity(hrp); hrp.CFrame=CFrame.new(mPos)
+                            local mPos = cPart.Position
+                            local dv   = hrp.Position - mPos
+                            if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 225 then   -- 15² tighter snap
+                                killVelocity(hrp); hrp.CFrame = CFrame.new(mPos)
                             end
                             if not dpsActive then reqAttack(cTgt) end
                         end
@@ -2173,293 +2201,234 @@ Tabs.Gen:Toggle({
                 end)
             end
 
-            local sessionSignalConn=nil
+            -- ─ Signal watchers ─
+            local sessionSignalConn = nil
             local function startSessionWatch()
                 if sessionSignalConn or not RaidsVisual then return end
-                sessionSignalConn=RaidsVisual.ChildAdded:Connect(function(child)
-                    if child.Name:find(myName,1,true) then 
-                        sessionCreated=true
-                        createAttempts=0
+                sessionSignalConn = RaidsVisual.ChildAdded:Connect(function(child)
+                    if child.Name:find(myName, 1, true) then
+                        sessionCreated = true; createAttempts = 0
                     end
                 end)
             end
             local function stopSessionWatch()
-                if sessionSignalConn then sessionSignalConn:Disconnect(); sessionSignalConn=nil end
+                if sessionSignalConn then sessionSignalConn:Disconnect(); sessionSignalConn = nil end
             end
 
-            local mobSignalConn=nil
-            local function startMobWatch()
-                if mobSignalConn then return end
-                mobSignalConn=ServerTargets.ChildAdded:Connect(function(child)
-                    if child.Name:sub(1,5)=="Raids" then
-                    end
-                end)
-            end
-            local function stopMobWatch()
-                if mobSignalConn then mobSignalConn:Disconnect(); mobSignalConn=nil end
-            end
-            startSessionWatch(); startMobWatch()
+            startSessionWatch()
 
-            local function cancelRaid() return not getgenv().autoRaid end
-
+            -- ═══════════════════════════════════════════════
+            --  MAIN STATE MACHINE
+            -- ═══════════════════════════════════════════════
             while getgenv().autoRaid do
-                getgenv().raidSt=st
+                getgenv().raidSt = st
 
+                -- Always wait for player to be alive
                 if not waitUntilAlive(cancelRaid, 20) then break end
                 if not getgenv().autoRaid then break end
 
+                -- ── RIFT INTERRUPT ──────────────────────────
                 if raidYieldCheck() then
+                    -- Leave any active session immediately
                     if getRaidSession() then
                         pcall(function() R.RaidsL:FireServer("Leave") end)
-                        task.wait(0.08)
+                        task.wait(0.1)
                         pcall(function() R.RaidsL:FireServer("Leave") end)
                     end
-                    abortRaid(); stopSessionWatch(); stopMobWatch()
-
-                    while getgenv().autoRaid and State.riftActive do task.wait(0.10) end
-                    local settleDl = os.clock() + 8.0
-                    while getgenv().autoRaid and State.riftSettling and os.clock() < settleDl do
-                        task.wait(0.10)
-                    end
-                    if State.riftSettling then
-                        State.riftSettling = false
-                        getgenv().riftSettling = false
-                        task.wait(0.3)
+                    cleanupCombat()
+                    getgenv().raidInP     = false
+                    State.raidActive      = false
+                    State.raidFinishing   = false
+                    if summonPaused and summonPauseReason == "raid" then
+                        summonPaused = false; summonPauseReason = nil
                     end
 
-                    lastStgUp = 0; lastHRPUp = 0
-                    task.wait(0.25); lastStgUp = 0
+                    -- Wait for rift to fully clear
+                    waitRiftClear(cancelRaid, 300)
+                    if not getgenv().autoRaid then break end
 
-                    if getgenv().autoRaid then
-                        local curStage = getStg()
-                        local homeStage = sg()
-                        if curStage == homeStage then
-                            if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
-                            cAtt=0; sessionCreated=false; createAttempts=0
-                            setRaidSt("FIND_PAD")
-                        else
-                            setRaidSt("TELEPORT")
-                        end
-                        startSessionWatch(); startMobWatch()
+                    -- Flush caches, re-evaluate stage
+                    lastStgUp = 0; lastHRPUp = 0; task.wait(0.3); lastStgUp = 0
+                    sessionCreated = false; createAttempts = 0
+                    State.raidInProgress = false
+
+                    if getStg() == sg() then
+                        if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
+                        cAtt = 0; setRaidSt("FIND_PAD")
+                    else
+                        setRaidSt("TELEPORT")
                     end
+                    startSessionWatch()
                     continue
                 end
 
-                if st == "FIND_PAD" or st == "TELEPORT" or st == "IDLE" or st == "CREATE" then
-                    if isBossReady() and getgenv().autoBoss and not State.raidActive then
-                        task.wait(1.0)
-                        continue
-                    end
-                end
-
-                if st=="IDLE" then
-                    inCombat=false; getgenv().raidInP=false; raidMobCountAt=-1
-                    State.raidActive=false; State.raidFinishing=false
-                    sessionCreated=false; createAttempts=0
+                -- ── IDLE ────────────────────────────────────
+                if st == "IDLE" then
+                    inCombat = false; getgenv().raidInP = false; raidMobCountAt = -1
+                    State.raidActive = false; State.raidFinishing = false; State.raidInProgress = false
+                    sessionCreated = false; createAttempts = 0
                     forceSessionRefresh(); task.wait(0.04)
+
                     if getRaidSession() then
-                        getgenv().raidInP=true; summonPaused=true; summonPauseReason="raid"
-                        State.raidActive=true
-                        setRaidSt(countRaidMobs(true)>0 and "FIGHTING" or "POST_FIGHT")
+                        -- Reconnect to existing session
+                        getgenv().raidInP = true
+                        summonPaused = true; summonPauseReason = "raid"
+                        local mobCnt = countRaidMobs(true)
+                        setRaidSt(mobCnt > 0 and "FIGHTING" or "POST_FIGHT")
                     else
-                        pads={}; pIdx=1; cAtt=0; lastStgUp=0
-                        sessionCreated=false; createAttempts=0
+                        pads = {}; pIdx = 1; cAtt = 0; lastStgUp = 0
                         setRaidSt("TELEPORT")
                     end
 
-                elseif st=="TELEPORT" then
-                    if stateAge()>60 then setRaidSt("IDLE"); continue end
-                    getgenv().raidInP=false; State.raidActive=false
-                    sessionCreated=false
+                -- ── TELEPORT ────────────────────────────────
+                elseif st == "TELEPORT" then
+                    if stateAge() > 60 then setRaidSt("IDLE"); continue end
+                    getgenv().raidInP = false; State.raidActive = false; State.raidInProgress = true
+                    sessionCreated = false
 
-                    local homeStage = sg()
-                    local ok = preciseTpToStage(homeStage, cancelRaid, 20)
+                    local ok = preciseTpToStage(sg(), cancelRaid, 22)
                     if raidYieldCheck() then continue end
                     if ok then
-                        if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
-                        cAtt=0; sessionCreated=false; createAttempts=0
+                        if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
+                        cAtt = 0; sessionCreated = false; createAttempts = 0
                         setRaidSt("FIND_PAD")
                     else
                         task.wait(0.5); continue
                     end
 
-                elseif st=="FIND_PAD" then
-                    getgenv().raidInP=false; State.raidActive=false
-                    sessionCreated=false
+                -- ── FIND_PAD ────────────────────────────────
+                elseif st == "FIND_PAD" then
+                    getgenv().raidInP = false; State.raidActive = false; State.raidInProgress = true
+                    sessionCreated = false
 
-                    if isBossReady() and getgenv().autoBoss then
-                        task.wait(1.0); continue
-                    end
-
-                    if stateAge()>25 then
-                        lastStgUp=0
-                        if getStg()~=sg() then
-                            setRaidSt("TELEPORT")
-                        else
-                            if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
-                            stateEnterTime=os.clock()
-                        end
-                        continue
-                    end
-
-                    lastStgUp=0
-                    if getStg()~=sg() then setRaidSt("TELEPORT"); continue end
-
-                    local pad=nil
-                    if getgenv().isDD then
-                        pad=getDoubleDungeonPad()
-                        if not pad then task.wait(0.25); continue end
-                    else
-                        if #pads==0 then pads=getLobbyPads(); pIdx=1 end
-                        if #pads==0 then task.wait(0.25); continue end
-                        for i=1,#pads do
-                            local idx=((pIdx-1+i-1)%#pads)+1
-                            local p=pads[idx]
-                            if p and p.Parent and isPadAvailable(p) then pad=p; pIdx=idx; break end
-                        end
-                        if not pad then
-                            pads=getLobbyPads(); pIdx=(pIdx%math.max(#pads,1))+1
-                            task.wait(0.25); continue
-                        end
-                    end
-
-                    local snapOk = precisePadSnap(pad)
-                    if not snapOk then task.wait(0.1); continue end
-                    task.wait(0.05)
-
-                    if not getgenv().autoRaid or raidYieldCheck() then continue end
-                    cAtt=0; sessionCreated=false; createAttempts=0
-                    setRaidSt("CREATE")
-
-                elseif st=="CREATE" then
-                    if stateAge() > 45 then
-                        createAttempts = 0
-                        sessionCreated = false
-                        setRaidSt("TELEPORT")
-                        continue
-                    end
-
-                    forceSessionRefresh()
-                    if getRaidSession() then
-                        sessionCreated = true
-                        createAttempts = 0
-                        task.wait(0.5)
-                        setRaidSt("WAIT_ENTER")
+                    if stateAge() > 30 then
+                        lastStgUp = 0
+                        setRaidSt(getStg() ~= sg() and "TELEPORT" or "FIND_PAD")
+                        if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
+                        stateEnterTime = os.clock()
                         continue
                     end
 
                     lastStgUp = 0
-                    if getStg() ~= sg() then
-                        setRaidSt("TELEPORT")
-                        continue
+                    if getStg() ~= sg() then setRaidSt("TELEPORT"); continue end
+
+                    local pad = nil
+                    if getgenv().isDD then
+                        pad = getDoubleDungeonPad()
+                        if not pad then task.wait(0.25); continue end
+                    else
+                        if #pads == 0 then pads = getLobbyPads(); pIdx = 1 end
+                        if #pads == 0 then task.wait(0.3); continue end
+                        for i = 1, #pads do
+                            local idx = ((pIdx - 1 + i - 1) % #pads) + 1
+                            local p   = pads[idx]
+                            if p and p.Parent and isPadAvailable(p) then
+                                pad = p; pIdx = idx; break
+                            end
+                        end
+                        if not pad then
+                            pads = getLobbyPads()
+                            pIdx = (pIdx % math.max(#pads, 1)) + 1
+                            task.wait(0.3); continue
+                        end
                     end
 
+                    local snapOk = precisePadSnap(pad)
+                    if not snapOk then task.wait(0.15); continue end
+                    task.wait(0.05)
+                    if not getgenv().autoRaid or raidYieldCheck() then continue end
+                    cAtt = 0; sessionCreated = false; createAttempts = 0
+                    setRaidSt("CREATE")
+
+                -- ── CREATE ──────────────────────────────────
+                elseif st == "CREATE" then
+                    State.raidInProgress = true
+
+                    if stateAge() > 40 then
+                        createAttempts = 0; sessionCreated = false
+                        setRaidSt("TELEPORT"); continue
+                    end
+
+                    forceSessionRefresh()
+                    if getRaidSession() then
+                        sessionCreated = true; createAttempts = 0
+                        task.wait(0.4); setRaidSt("WAIT_ENTER"); continue
+                    end
+
+                    lastStgUp = 0
+                    if getStg() ~= sg() then setRaidSt("TELEPORT"); continue end
+
                     local now0 = os.clock()
-                    if now0 - lastCreateTime >= 0.25 then
+                    if now0 - lastCreateTime >= 0.30 then
                         lastCreateTime = now0
                         local mapName = getgenv().isDD and "Double Dungeons" or getgenv().selRaidMap
                         R.Raids:FireServer(mapName, getgenv().selRaidDiff)
                         createAttempts = createAttempts + 1
                     end
 
+                    -- Poll for session for up to 3 seconds
                     local checkStart = os.clock()
                     local foundSession = false
-                    
                     while os.clock() - checkStart < 3.0 do
-                        if raidYieldCheck() or cancelRaid() then
-                            foundSession = false
-                            break
-                        end
-                        
-                        task.wait(0.1)
-                        
-                        if sessionCreated then
-                            forceSessionRefresh()
-                            if getRaidSession() then
-                                foundSession = true
-                                break
-                            end
-                        end
-                        
+                        if raidYieldCheck() or cancelRaid() then break end
+                        task.wait(0.08)
+                        if sessionCreated then forceSessionRefresh() end
                         forceSessionRefresh()
                         if getRaidSession() then
-                            sessionCreated = true
-                            foundSession = true
-                            break
+                            sessionCreated = true; foundSession = true; break
                         end
                     end
 
                     if foundSession then
-                        createAttempts = 0
-                        task.wait(0.5)
-                        setRaidSt("WAIT_ENTER")
-                    else
-                        if createAttempts >= 15 then
-                            createAttempts = 0
-                            sessionCreated = false
-                            setRaidSt("TELEPORT")
-                        end
+                        createAttempts = 0; task.wait(0.5); setRaidSt("WAIT_ENTER")
+                    elseif createAttempts >= 12 then
+                        createAttempts = 0; sessionCreated = false; setRaidSt("TELEPORT")
                     end
 
-                elseif st=="WAIT_ENTER" then
-                    if stateAge() > 60 then
+                -- ── WAIT_ENTER ──────────────────────────────
+                elseif st == "WAIT_ENTER" then
+                    State.raidActive = true; State.raidInProgress = true
+
+                    if stateAge() > 55 then
                         forceSessionRefresh()
                         if getRaidSession() then
-                            pcall(function() R.RaidsL:FireServer("Leave") end)
-                            task.wait(0.25)
+                            pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.3)
                         end
-                        sessionCreated = false
-                        setRaidSt("IDLE")
-                        continue
+                        sessionCreated = false; fullReset(); continue
                     end
-                    
+
                     if raidYieldCheck() then
-                        pcall(function() R.RaidsL:FireServer("Leave") end)
-                        task.wait(0.10)
-                        getgenv().raidInP=false
-                        sessionCreated = false
-                        if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
-                        setRaidSt("IDLE")
-                        continue
+                        pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.1)
+                        getgenv().raidInP = false; sessionCreated = false
+                        if summonPaused and summonPauseReason == "raid" then
+                            summonPaused = false; summonPauseReason = nil
+                        end
+                        setRaidSt("IDLE"); continue
                     end
-                    
-                    getgenv().raidInP=true
-                    summonPaused=true
-                    summonPauseReason="raid"
-                    State.raidActive=true
+
+                    getgenv().raidInP = true
+                    summonPaused = true; summonPauseReason = "raid"
 
                     forceSessionRefresh()
                     if not getRaidSession() then
-                        getgenv().raidInP = false
-                        State.raidActive = false
+                        getgenv().raidInP = false; State.raidActive = false
                         sessionCreated = false
-                        if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
-                        setRaidSt("IDLE")
-                        continue
+                        if summonPaused and summonPauseReason == "raid" then
+                            summonPaused = false; summonPauseReason = nil
+                        end
+                        setRaidSt("IDLE"); continue
                     end
 
+                    -- Wait for first mob to appear (up to 35 s)
                     local mobWaitStart = os.clock()
-                    local mobFound = false
-                    
-                    while os.clock() - mobWaitStart < 30 do
-                        if not getgenv().autoRaid or raidYieldCheck() then
-                            mobFound = false
-                            break
-                        end
-                        
+                    local mobFound     = false
+                    while os.clock() - mobWaitStart < 35 do
+                        if not getgenv().autoRaid or raidYieldCheck() then break end
                         forceSessionRefresh()
-                        if not getRaidSession() then
-                            mobFound = false
-                            break
-                        end
-                        
+                        if not getRaidSession() then break end
                         lastTgtUp = 0
-                        if countRaidMobs(true) > 0 then
-                            mobFound = true
-                            break
-                        end
-                        
-                        task.wait(0.2)
+                        if countRaidMobs(true) > 0 then mobFound = true; break end
+                        task.wait(0.15)
                     end
 
                     if mobFound then
@@ -2467,183 +2436,133 @@ Tabs.Gen:Toggle({
                     else
                         forceSessionRefresh()
                         if getRaidSession() then
-                            if countRaidMobs(true) == 0 then
-                                setRaidSt("POST_FIGHT")
-                            else
-                                setRaidSt("FIGHTING")
-                            end
+                            setRaidSt(countRaidMobs(true) > 0 and "FIGHTING" or "POST_FIGHT")
                         else
-                            getgenv().raidInP = false
-                            State.raidActive = false
+                            getgenv().raidInP = false; State.raidActive = false
                             sessionCreated = false
-                            if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
+                            if summonPaused and summonPauseReason == "raid" then
+                                summonPaused = false; summonPauseReason = nil
+                            end
                             setRaidSt("IDLE")
                         end
                     end
                     continue
 
-                elseif st=="FIGHTING" then
-                    State.raidActive=true
-                    if stateAge()>300 then
-                        cleanupCombat()
-                        pcall(function() R.RaidsL:FireServer("Leave") end)
-                        task.wait(0.12)
-                        getgenv().raidInP=false
-                        State.raidActive=false
-                        sessionCreated=false
-                        if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
-                        setRaidSt("IDLE")
-                        continue
-                    end
-                    getgenv().raidInP=true; summonPaused=true; summonPauseReason="raid"
+                -- ── FIGHTING ────────────────────────────────
+                elseif st == "FIGHTING" then
+                    State.raidActive = true; State.raidInProgress = true
+
+                    -- Safety timeout (5 min)
+                    if stateAge() > 300 then fullReset(); continue end
+
+                    getgenv().raidInP = true
+                    summonPaused = true; summonPauseReason = "raid"
                     if not inCombat then startRaidCombat() end
-                    local fDl=os.clock()+300
-                    while os.clock()<fDl and getgenv().autoRaid do
+
+                    local fDl = os.clock() + 300
+                    while os.clock() < fDl and getgenv().autoRaid do
                         if raidYieldCheck() then
                             cleanupCombat()
-                            pcall(function() R.RaidsL:FireServer("Leave") end)
-                            task.wait(0.10)
-                            getgenv().raidInP=false
-                            State.raidActive=false
-                            sessionCreated=false
-                            if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
-                            setRaidSt("IDLE")
-                            break
+                            pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.1)
+                            getgenv().raidInP = false; State.raidActive = false
+                            sessionCreated = false
+                            if summonPaused and summonPauseReason == "raid" then
+                                summonPaused = false; summonPauseReason = nil
+                            end
+                            setRaidSt("IDLE"); break
                         end
-                        forceSessionRefresh()
-                        raidMobCountAt = -1
-                        if countRaidMobs(true)==0 then
-                            task.wait(0.3)
-                            forceSessionRefresh()
-                            raidMobCountAt = -1
-                            if countRaidMobs(true)==0 then
-                                task.wait(0.3)
-                                forceSessionRefresh()
-                                raidMobCountAt = -1
-                                if countRaidMobs(true)==0 then break end
+
+                        -- Check if all mobs dead (triple-confirm)
+                        forceSessionRefresh(); raidMobCountAt = -1
+                        if countRaidMobs(true) == 0 then
+                            task.wait(0.4); forceSessionRefresh(); raidMobCountAt = -1
+                            if countRaidMobs(true) == 0 then
+                                task.wait(0.4); forceSessionRefresh(); raidMobCountAt = -1
+                                if countRaidMobs(true) == 0 then break end
                             end
                         end
-                        task.wait(0.015)
-                    end
-                    if st=="FIGHTING" then
-                        cleanupCombat()
-                        task.wait(0.03)
-                        forceSessionRefresh()
-                        setRaidSt("POST_FIGHT")
+                        task.wait(0.02)
                     end
 
-                elseif st=="POST_FIGHT" then
-                    State.raidFinishing=true
-                    if stateAge()>30 then
-                        abortRaid()
-                        continue
+                    if st == "FIGHTING" then
+                        cleanupCombat(); task.wait(0.05)
+                        forceSessionRefresh(); setRaidSt("POST_FIGHT")
                     end
-                    if raidYieldCheck() then
-                        abortRaid()
-                        continue
-                    end
-                    forceSessionRefresh()
-                    raidMobCountAt = -1
-                    if countRaidMobs(true)>0 then
-                        setRaidSt("FIGHTING")
-                        continue
-                    end
-                    inCombat=false
-                    getgenv().raidInP=true
+
+                -- ── POST_FIGHT ───────────────────────────────
+                elseif st == "POST_FIGHT" then
+                    State.raidFinishing = true; State.raidInProgress = true
+
+                    if stateAge() > 35 then fullReset(); continue end
+                    if raidYieldCheck() then fullReset(); continue end
+
+                    forceSessionRefresh(); raidMobCountAt = -1
+                    if countRaidMobs(true) > 0 then setRaidSt("FIGHTING"); continue end
+
+                    inCombat = false; getgenv().raidInP = true
                     collectBoxes()
                     if not getgenv().autoRaid then break end
-                    if raidYieldCheck() then
-                        abortRaid()
-                        continue
-                    end
-                    forceSessionRefresh()
-                    raidMobCountAt = -1
-                    if countRaidMobs(true)>0 then
-                        setRaidSt("FIGHTING")
-                        continue
-                    end
+                    if raidYieldCheck() then fullReset(); continue end
+
+                    forceSessionRefresh(); raidMobCountAt = -1
+                    if countRaidMobs(true) > 0 then setRaidSt("FIGHTING"); continue end
 
                     exitRaid()
-                    if raidYieldCheck() then
-                        abortRaid()
-                        continue
+                    if raidYieldCheck() then fullReset(); continue end
+
+                    -- Ensure session is gone
+                    local sessWaitDl = os.clock() + 10
+                    while os.clock() < sessWaitDl do
+                        if raidYieldCheck() then break end
+                        forceSessionRefresh()
+                        if not getRaidSession() then break end
+                        pcall(function() R.RaidsL:FireServer("Leave") end)
+                        task.wait(0.25)
+                    end
+                    if getRaidSession() then
+                        pcall(function() R.RaidsL:FireServer("Leave") end)
+                        task.wait(0.4); forceSessionRefresh()
                     end
 
-                    do
-                        local sessWaitDl = os.clock() + 8
-                        while os.clock() < sessWaitDl do
-                            if raidYieldCheck() then break end
-                            forceSessionRefresh()
-                            if not getRaidSession() then break end
-                            pcall(function() R.RaidsL:FireServer("Leave") end)
-                            task.wait(0.2)
-                        end
-                        if getRaidSession() then
-                            pcall(function() R.RaidsL:FireServer("Leave") end)
-                            task.wait(0.3)
-                            forceSessionRefresh()
-                        end
-                    end
-
-                    task.wait(0.8)
-                    lastStgUp = 0
-
-                    getgenv().raidInP = false
+                    task.wait(0.8); lastStgUp = 0
+                    getgenv().raidInP  = false
                     State.raidActive   = false
-                    sessionCreated = false
-                    if summonPaused and summonPauseReason=="raid" then
-                        summonPaused=false
-                        summonPauseReason=nil
+                    sessionCreated     = false
+                    if summonPaused and summonPauseReason == "raid" then
+                        summonPaused = false; summonPauseReason = nil
                     end
-                    cAtt=0
+                    cAtt = 0
                     setRaidSt("WAIT_EXIT")
 
-                elseif st=="WAIT_EXIT" then
-                    State.raidFinishing=true
-                    if stateAge()>35 then
-                        getgenv().raidInP=false
-                        State.raidActive=false
-                        State.raidFinishing=false
-                        sessionCreated=false
-                        if summonPaused and summonPauseReason=="raid" then
-                            summonPaused=false
-                            summonPauseReason=nil
-                        end
-                        setRaidSt("IDLE")
-                        continue
+                -- ── WAIT_EXIT ────────────────────────────────
+                elseif st == "WAIT_EXIT" then
+                    State.raidFinishing = true; State.raidInProgress = true
+
+                    if stateAge() > 40 then
+                        State.raidFinishing  = false
+                        State.raidInProgress = false
+                        setRaidSt("IDLE"); continue
                     end
                     if raidYieldCheck() then
-                        getgenv().raidInP=false
-                        State.raidActive=false
-                        State.raidFinishing=false
-                        sessionCreated=false
-                        if summonPaused and summonPauseReason=="raid" then
-                            summonPaused=false
-                            summonPauseReason=nil
-                        end
-                        setRaidSt("IDLE")
-                        continue
+                        State.raidFinishing  = false
+                        State.raidInProgress = false
+                        setRaidSt("IDLE"); continue
                     end
-                    inCombat=false
+
+                    inCombat = false
                     local targetStage = sg()
 
                     if isHomeStageReady(targetStage) then
-                        task.wait(0.4)
-                        lastStgUp = 0
+                        task.wait(0.4); lastStgUp = 0
                         if isHomeStageReady(targetStage) then
-                            getgenv().raidInP=false
-                            State.raidActive=false
-                            State.raidFinishing=false
-                            sessionCreated=false
-                            if summonPaused and summonPauseReason=="raid" then
-                                summonPaused=false
-                                summonPauseReason=nil
+                            State.raidFinishing  = false
+                            State.raidInProgress = false
+                            if summonPaused and summonPauseReason == "raid" then
+                                summonPaused = false; summonPauseReason = nil
                             end
-                            forceSessionRefresh()
-                            task.wait(0.08)
-                            if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
-                            cAtt=0
-                            setRaidSt("FIND_PAD")
+                            forceSessionRefresh(); task.wait(0.08)
+                            if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
+                            cAtt = 0; setRaidSt("FIND_PAD")
                             continue
                         end
                     end
@@ -2651,29 +2570,22 @@ Tabs.Gen:Toggle({
                     local tpOk = preciseTpToStage(targetStage, cancelRaid, 25)
                     if not getgenv().autoRaid then break end
                     if raidYieldCheck() then
-                        State.raidActive=false
-                        State.raidFinishing=false
-                        abortRaid()
-                        continue
+                        State.raidFinishing  = false
+                        State.raidInProgress = false
+                        fullReset(); continue
                     end
 
                     if tpOk then
-                        task.wait(0.5)
-                        lastStgUp = 0
+                        task.wait(0.5); lastStgUp = 0
                         if isHomeStageReady(targetStage) then
-                            getgenv().raidInP=false
-                            State.raidActive=false
-                            State.raidFinishing=false
-                            sessionCreated=false
-                            if summonPaused and summonPauseReason=="raid" then
-                                summonPaused=false
-                                summonPauseReason=nil
+                            State.raidFinishing  = false
+                            State.raidInProgress = false
+                            if summonPaused and summonPauseReason == "raid" then
+                                summonPaused = false; summonPauseReason = nil
                             end
-                            forceSessionRefresh()
-                            task.wait(0.08)
-                            if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
-                            cAtt=0
-                            setRaidSt("FIND_PAD")
+                            forceSessionRefresh(); task.wait(0.08)
+                            if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
+                            cAtt = 0; setRaidSt("FIND_PAD")
                         else
                             setRaidSt("IDLE")
                         end
@@ -2682,20 +2594,22 @@ Tabs.Gen:Toggle({
                     end
                     continue
                 end
+
                 RunService.Heartbeat:Wait()
-            end
+            end -- while loop
+
             stopSessionWatch()
-            stopMobWatch()
-            abortRaid()
-            State.raidActive=false
-            State.raidFinishing=false
-        end)
-    end
-})
+            fullReset()
+            State.raidActive     = false
+            State.raidFinishing  = false
+            State.raidInProgress = false
+        end) -- task.spawn
+    end -- Callback
+}) -- Toggle
 end -- close do block (raid system)
 
 -- ============================================================
--- AUTO RIFT  (Priority: HIGHEST)
+-- AUTO RIFT  (Priority: HIGHEST — interrupts everything)
 -- ============================================================
 Tabs.Gen:Section({Title="Auto Rift"})
 
@@ -3034,8 +2948,7 @@ Tabs.Gen:Toggle({
 
                 local riftModel = pollForRiftModel()
                 if not riftModel then
-                    task.wait(0.05)
-                    continue
+                    task.wait(0.05); continue
                 end
 
                 detectedModel      = nil
@@ -3048,6 +2961,7 @@ Tabs.Gen:Toggle({
                 summonPaused       = true
                 summonPauseReason  = "rift"
 
+                -- Force-leave any active raid immediately
                 if getgenv().raidInP or getRaidSession() then
                     pcall(function() R.RaidsL:FireServer("Leave") end)
                     task.wait(0.08)
@@ -3088,8 +3002,7 @@ Tabs.Gen:Toggle({
 
                 if cancelFn() then riftCleanup(); setupWatchers(); continue end
 
-                flushAllCaches()
-                task.wait(0.1)
+                flushAllCaches(); task.wait(0.1)
 
                 local mobWaitDl = os.clock() + 25
                 while os.clock() < mobWaitDl and autoRiftRun do
@@ -3101,16 +3014,14 @@ Tabs.Gen:Toggle({
 
                 if cancelFn() then riftCleanup(); setupWatchers(); continue end
                 if not riftHasLiveMobs() and not findRiftVisualSession() then
-                    riftCleanup(); setupWatchers()
-                    task.wait(0.5); continue
+                    riftCleanup(); setupWatchers(); task.wait(0.5); continue
                 end
 
                 local initMob, initPart = findNearestRiftMob()
                 if initPart then
                     local hrpNow = getHRP()
                     if hrpNow then
-                        killVelocity(hrpNow)
-                        hrpNow.CFrame = CFrame.new(initPart.Position)
+                        killVelocity(hrpNow); hrpNow.CFrame = CFrame.new(initPart.Position)
                         task.wait(0.03)
                     end
                 end
@@ -3121,7 +3032,6 @@ Tabs.Gen:Toggle({
                 local cRiftPart = initPart
                 local _reqLast  = 0
                 local _scanTick = 0
-                local _reEqLast = 0
                 local _stuckCnt = 0
 
                 if Conns.rift then pcall(function() Conns.rift:Disconnect() end) end
@@ -3197,8 +3107,7 @@ Tabs.Gen:Toggle({
                                 hasRiftsMob = true; break
                             end
                         end
-                        if hasRiftsMob then
-                            noMobTick = 0
+                        if hasRiftsMob then noMobTick = 0
                         else
                             noMobTick = noMobTick + 1
                             if noMobTick >= CLEAR_CONFIRM then break end
@@ -3243,10 +3152,8 @@ Tabs.Gen:Toggle({
                 end
                 disconnectWatchers()
 
-                task.wait(0.3)
-                lastStgUp = 0; lastHRPUp = 0
+                task.wait(0.3); lastStgUp = 0; lastHRPUp = 0
                 task.wait(0.2); lastStgUp = 0
-
                 getgenv().riftSettling = false
                 State.riftSettling     = false
 
@@ -3267,7 +3174,7 @@ Tabs.Gen:Toggle({
 })
 
 -- ============================================================
--- AUTO ABANDON VILLAGE (Priority: 2nd — Boss)
+-- AUTO ABANDON VILLAGE (Boss) — waits for BOTH Rift AND Raid
 -- ============================================================
 Tabs.Gen:Section({Title="Abandon Village"})
 
@@ -3449,8 +3356,13 @@ Tabs.Gen:Toggle({
             local function cancelBoss()
                 return not getgenv().autoBoss
             end
+            -- Rift interrupt: Rift is active or just finished settling
             local function riftInterrupt()
                 return State.riftActive or State.riftDetected
+            end
+            -- ── NEW: Raid is still running (any phase) ──────
+            local function raidInterrupt()
+                return isRaidBusy()
             end
 
             local bossSignalFired = false
@@ -3466,14 +3378,18 @@ Tabs.Gen:Toggle({
                 if cancelBoss() then break end
                 clearBossConn()
 
+                -- ── Wait for Rift to clear ───────────────────
                 if riftInterrupt() then
                     getgenv().bossWaiting = false
-                    while getgenv().autoBoss and (State.riftActive or State.riftSettling) do
+                    local riftWaitDl = os.clock() + 600
+                    while getgenv().autoBoss and (State.riftActive or State.riftSettling)
+                          and os.clock() < riftWaitDl do
                         task.wait(0.2)
                     end
                     if cancelBoss() then break end
                 end
 
+                -- ── Check boss event ─────────────────────────
                 if not isBossReady() then
                     bossSignalFired = false
                     getgenv().bossWaiting = false
@@ -3489,26 +3405,38 @@ Tabs.Gen:Toggle({
 
                 getgenv().bossWaiting = true
 
-                if State.raidActive then
-                    local raidWaitDl = os.clock() + 600
-                    while State.raidActive and os.clock() < raidWaitDl do
-                        if cancelBoss() then break end
-                        if riftInterrupt() then break end
-                        task.wait(0.3)
+                -- ── WAIT FOR RIFT (highest priority) ─────────
+                if riftInterrupt() then
+                    getgenv().bossWaiting = false
+                    local dl = os.clock() + 600
+                    while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do
+                        task.wait(0.2)
                     end
-                    if riftInterrupt() then
-                        getgenv().bossWaiting = false
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) do
-                            task.wait(0.2)
-                        end
-                        if cancelBoss() then break end
-                        continue
-                    end
+                    if cancelBoss() then break end
+                    continue   -- re-check boss event after rift
                 end
 
-                if cancelBoss() then continue end
-                if not isBossReady() then getgenv().bossWaiting=false; continue end
+                -- ── WAIT FOR RAID (second priority) ──────────
+                -- Boss should NOT interrupt a running raid; wait for it to fully finish
+                if raidInterrupt() then
+                    local raidWaitDl = os.clock() + 600
+                    while getgenv().autoBoss and raidInterrupt() and os.clock() < raidWaitDl do
+                        if cancelBoss() then break end
+                        -- If rift spawns while waiting for raid → stop waiting, let rift take over
+                        if riftInterrupt() then break end
+                        task.wait(0.2)
+                    end
+                    if cancelBoss() then break end
+                    -- If rift interrupted, loop back to handle rift first
+                    if riftInterrupt() then
+                        getgenv().bossWaiting = false
+                        continue
+                    end
+                    -- Re-check boss event is still active
+                    if not isBossReady() then getgenv().bossWaiting = false; continue end
+                end
 
+                -- ── PROCEED TO BOSS ───────────────────────────
                 summonPaused=true; summonPauseReason="boss"
                 getgenv().doBoss=true; State.bossActive=true
 
@@ -3518,7 +3446,8 @@ Tabs.Gen:Toggle({
                 if not ok or cancelBoss() or riftInterrupt() then
                     bossFail()
                     if riftInterrupt() then
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) do task.wait(0.2) end
+                        local dl = os.clock() + 600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
                     end
                     task.wait(1.0); continue
                 end
@@ -3528,7 +3457,8 @@ Tabs.Gen:Toggle({
                 if cancelBoss() or riftInterrupt() then
                     bossFail()
                     if riftInterrupt() then
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) do task.wait(0.2) end
+                        local dl = os.clock() + 600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
                     end
                     continue
                 end
@@ -3575,7 +3505,8 @@ Tabs.Gen:Toggle({
                 if not foundUI or cancelBoss() or riftInterrupt() then
                     bossFail()
                     if riftInterrupt() then
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) do task.wait(0.2) end
+                        local dl = os.clock() + 600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
                     end
                     task.wait(1.0); continue
                 end
@@ -3584,7 +3515,8 @@ Tabs.Gen:Toggle({
                 if cancelBoss() or riftInterrupt() or not detectBossFightUI() then
                     bossFail()
                     if riftInterrupt() then
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) do task.wait(0.2) end
+                        local dl = os.clock() + 600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
                     end
                     continue
                 end
@@ -3610,7 +3542,8 @@ Tabs.Gen:Toggle({
                 if not cBoss or cancelBoss() or riftInterrupt() then
                     bossFail()
                     if riftInterrupt() then
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) do task.wait(0.2) end
+                        local dl = os.clock() + 600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
                     end
                     task.wait(1.0); continue
                 end
@@ -3670,15 +3603,16 @@ Tabs.Gen:Toggle({
                 end
 
                 fighting=false; clearBossConn()
-                getgenv().doBoss    = false
+                getgenv().doBoss      = false
                 getgenv().bossWaiting = false
-                State.bossActive    = false
+                State.bossActive      = false
 
                 if riftInterrupt() then
                     if summonPaused and summonPauseReason=="boss" then
                         summonPaused=false; summonPauseReason=nil
                     end
-                    while getgenv().autoBoss and (State.riftActive or State.riftSettling) do task.wait(0.2) end
+                    local dl = os.clock() + 600
+                    while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
                     continue
                 end
 
@@ -3924,11 +3858,7 @@ lp.CharacterAdded:Connect(function()
 end)
 Tabs.Misc:Button({Title="Toggle Name Spoofer", Callback=function() nSEnb=not nSEnb; updateNameSpoof() end})
 
--- ============================================================
--- UI CLEANER
--- ============================================================
 Tabs.Misc:Section({Title="UI Cleaner"})
-
 do
     local _rerollUIConn = nil
     Tabs.Misc:Toggle({
@@ -3978,13 +3908,8 @@ do
     })
 end
 
--- ============================================================
--- FPS BOOST
--- ============================================================
 Tabs.Misc:Section({Title="FPS Boost"})
-
 Tabs.Misc:Button({Title="FPS Boost", Callback=function() end})
-
 Tabs.Misc:Button({Title="Remove All Effects", Callback=function()
     local vis = Workspace:FindFirstChild("Visual")
     if vis then pcall(function() vis:Destroy() end) end
@@ -4072,13 +3997,14 @@ lp.CharacterRemoving:Connect(function()
     getgenv().safeBoostActive = false
     pcall(function() R.Hatch:FireServer(false) end)
 
-    State.riftActive    = false
-    State.riftDetected  = false
-    State.riftSettling  = false
-    State.bossActive    = false
-    State.bossReady     = false
-    State.raidActive    = false
-    State.raidFinishing = false
+    State.riftActive     = false
+    State.riftDetected   = false
+    State.riftSettling   = false
+    State.bossActive     = false
+    State.bossReady      = false
+    State.raidActive     = false
+    State.raidFinishing  = false
+    State.raidInProgress = false
 
     getgenv().doRift=false;    getgenv().doBoss=false
     getgenv().riftSettling=false
@@ -4117,6 +4043,6 @@ task.spawn(function()
     end)
 end)
 
-end -- ← ปิด function __EnchantMain__ (FIX: บรรทัดนี้หายไปในต้นฉบับ)
+end -- close __EnchantMain__
 
 __EnchantMain__(loader_isPremium, loader_allowedGames, loader_hwid)
