@@ -1751,9 +1751,9 @@ DS = {
 
 -- ── UI Controls ───────────────────────────────────────────────
 Tabs.Pre:Input({
-    Title = "💀 Safe DMG Limit",
-    Desc  = "หยุด EQ ชั่วคราว 5s เมื่อ DMG เกิน limit",
-    Value = "2000000", Placeholder = "e.g. 2000000",
+    Title = "Damage Boost Safe",
+    Desc  = "",
+    Value = "3000000", Placeholder = "Set Limit Damage",
     Callback = function(v)
         local n = tonumber(v)
         if n then safeDMGLimit = math.max(n, 1000) end
@@ -1761,9 +1761,9 @@ Tabs.Pre:Input({
 })
 
 Tabs.Pre:Input({
-    Title = "⚡ Apex Cadence (s)",
-    Desc  = "ช่วงเวลาขั้นต่ำระหว่าง EQ burst  (0 = ไม่จำกัด)",
-    Value = "0", Placeholder = "e.g. 0  /  0.05  /  0.1",
+    Title = "Damage Boost",
+    Desc  = "",
+    Value = "0.35", Placeholder = "Set Damage Boost",
     Callback = function(v)
         local n = tonumber(v)
         if n then apexCadence = math.max(n, 0) end
