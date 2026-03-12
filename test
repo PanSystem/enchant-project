@@ -1734,9 +1734,9 @@ DS = {
 }
 
 Tabs.Pre:Input({
-    Title = "💀 Safe DMG Limit",
-    Desc  = "หยุด EQ ชั่วคราว 5s เมื่อ DMG เกิน limit",
-    Value = "2000000", Placeholder = "e.g. 2000000",
+    Title = "Damage Limit",
+    Desc  = "",
+    Value = "3000000", Placeholder = "Damage Limit",
     Callback = function(v)
         local n = tonumber(v)
         if n then safeDMGLimit = math.max(n, 1000) end
@@ -1744,9 +1744,9 @@ Tabs.Pre:Input({
 })
 
 Tabs.Pre:Input({
-    Title = "⚡ Apex Cadence (s)",
-    Desc  = "ช่วงเวลาขั้นต่ำระหว่าง EQ burst  (0 = ไม่จำกัด)",
-    Value = "0", Placeholder = "e.g. 0  /  0.05  /  0.1",
+    Title = "Damage Boost",
+    Desc  = "",
+    Value = "0", Placeholder = "",
     Callback = function(v)
         local n = tonumber(v)
         if n then apexCadence = math.max(n, 0) end
@@ -1799,7 +1799,7 @@ Tabs.Pre:Toggle({
 })
 
 Tabs.Pre:Toggle({
-    Title = "Safe Boost", Desc = "หยุด 5s เมื่อ DMG เกิน limit",
+    Title = "Safe Boost", Desc = "",
     Flag = "SafeBoost", Value = false,
     Callback = function(state)
         if state and not isPremiumUser then
@@ -3947,24 +3947,6 @@ end
 
 Tabs.Misc:Section({Title="FPS Boost"})
 Tabs.Misc:Button({Title="FPS Boost", Callback=function() end})
-Tabs.Misc:Button({Title="Remove All Effects", Callback=function()
-    local vis = Workspace:FindFirstChild("Visual")
-    if vis then pcall(function() vis:Destroy() end) end
-    local EFFECT_CLASSES = {
-        ParticleEmitter=true, Trail=true, Beam=true,
-        Fire=true, Smoke=true, Sparkles=true,
-        SelectionBox=true, BillboardGui=true,
-        SpecialMesh=true
-    }
-    local function sweepEffects(root)
-        for _, v in next, root:GetDescendants() do
-            if EFFECT_CLASSES[v.ClassName] then
-                pcall(function() v:Destroy() end)
-            end
-        end
-    end
-    sweepEffects(Workspace)
-end})
 
 -- ============================================================
 -- CHARACTER DEATH / RESTORE
