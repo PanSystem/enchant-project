@@ -1804,6 +1804,14 @@ Tabs.Pre:Toggle({
 })
 
 end -- end DPS Boost block
+
+-- ==========================================
+-- RAID SYSTEM UI
+-- ==========================================
+Tabs.Gen:Section({Title="Raid System"})
+Tabs.Gen:Dropdown({Title="Raid Map", Flag="RaidMap",
+    Values={"Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town","Reaper Society","Double Dungeons"},
+    Callback=function(v) getgenv().selRaidMap=v; getgenv().isDD=(v=="Double Dungeons") end})
 Tabs.Gen:Dropdown({Title="Difficulty", Flag="RaidDiff",
     Values={"Easy","Medium","Hard","Nightmare"},
     Callback=function(v) getgenv().selRaidDiff=v end})
