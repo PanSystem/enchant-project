@@ -1356,34 +1356,49 @@ Tabs.Gen:Toggle({
 })
 
 local function makeFarmConn(getScanFn, flagName, directTp)
-    local cT,cP=nil,nil; local lastScan=0
+    local cT, cP       = nil, nil
+    local lastScan     = 0
+    local justAcquired = false   -- flag: TP to mob immediately on new target
     return RunService.Heartbeat:Connect(function()
         if not getgenv()[flagName] then return end
-        local hrp=getHRP(); if not hrp then cT=nil; cP=nil; return end
-        local hum=hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
+        local hrp = getHRP(); if not hrp then cT=nil; cP=nil; return end
+        local hum = hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
         if not hum or hum.Health <= 0 then cT=nil; cP=nil; return end
         sendAtk()
         if cT and cP then
-            if not cT.Parent or not isMobAlive(cT) then cT=nil; cP=nil
+            if not cT.Parent or not isMobAlive(cT) then
+                cT=nil; cP=nil; justAcquired=false
             else
+                -- Update part position in case mob moved
+                local newPt = cT.PrimaryPart or cT:FindFirstChild("HumanoidRootPart")
+                if newPt and newPt.Parent then cP = newPt end
+
+                -- Always TP on fresh acquisition, then maintain proximity
+                local dv  = hrp.Position - cP.Position
+                local dsq = dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z
                 if directTp then
-                    local dv = hrp.Position - cP.Position
-                    if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 400 then
-                        killVelocity(hrp); hrp.CFrame = CFrame.new(cP.Position)
+                    -- TP if: just acquired target OR drifted too far (> 20 units)
+                    if justAcquired or dsq > 400 then
+                        killVelocity(hrp)
+                        hrp.CFrame = CFrame.new(cP.Position)
+                        justAcquired = false
                     end
-                    if not dpsActive then reqAttack(cT) end
                 else
-                    local d=hrp.Position-cP.Position
-                    local dsq=d.X*d.X+d.Y*d.Y+d.Z*d.Z
-                    if dsq > Const.ATK_D_SQ then cT=nil; cP=nil; return end
-                    if not dpsActive then reqAttack(cT) end
+                    -- Non-direct: drop target if out of attack range
+                    if dsq > Const.ATK_D_SQ then cT=nil; cP=nil; justAcquired=false; return end
                 end
+                if not dpsActive then reqAttack(cT) end
                 return
             end
         end
-        local now=os.clock()
-        if now-lastScan<0.03 then return end
-        lastScan=now; cT,cP=getScanFn()
+        local now = os.clock()
+        if now - lastScan < 0.03 then return end
+        lastScan = now
+        local newT, newP = getScanFn()
+        if newT and newT ~= cT then
+            justAcquired = true   -- new target → force TP next frame
+        end
+        cT, cP = newT, newP
     end)
 end
 
@@ -1800,8 +1815,14 @@ end -- end DPS Boost block
 -- ============================================================
 -- RAID OPTIONS (UI only — Raid loop below)
 -- ============================================================
+Tabs.Gen:Section({Title="Auto Raid"})
+Tabs.Gen:Dropdown({Title="Select Raid Map", Flag="RaidMap",
+    Values={"Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town"},
+    Value="Namex Planet",
+    Callback=function(v) getgenv().selRaidMap=v end})
 Tabs.Gen:Dropdown({Title="Difficulty", Flag="RaidDiff",
     Values={"Easy","Medium","Hard","Nightmare"},
+    Value="Easy",
     Callback=function(v) getgenv().selRaidDiff=v end})
 Tabs.Gen:Dropdown({Title="Collect Purple Chest", Flag="CollectPurple",
     Values={"No","Yes"}, Value="No",
@@ -2151,6 +2172,7 @@ Tabs.Gen:Toggle({
             local function startRaidCombat()
                 if Conns.raid then Conns.raid:Disconnect() end
                 inCombat = true; cTgt = nil; cPart = nil; raidMobCountAt = -1
+                local raidJustAcquired = false   -- force-TP on new target
                 Conns.raid = RunService.Heartbeat:Connect(function()
                     if not inCombat or not getgenv().autoRaid then
                         if Conns.raid then Conns.raid:Disconnect(); Conns.raid = nil end
@@ -2162,7 +2184,11 @@ Tabs.Gen:Toggle({
                     -- validate current target
                     if cTgt and cPart then
                         if not cTgt.Parent or not isMobAlive(cTgt) or not isRaidMob(cTgt) then
-                            cTgt = nil; cPart = nil
+                            cTgt = nil; cPart = nil; raidJustAcquired = false
+                        else
+                            -- refresh part in case mob moved
+                            local newPt = cTgt.PrimaryPart or cTgt:FindFirstChild("HumanoidRootPart")
+                            if newPt and newPt.Parent then cPart = newPt end
                         end
                     end
 
@@ -2183,6 +2209,7 @@ Tabs.Gen:Toggle({
                                     end
                                 end
                             end
+                            if cTgt then raidJustAcquired = true end  -- new target → TP immediately
                         end
                     end
 
@@ -2192,8 +2219,11 @@ Tabs.Gen:Toggle({
                         if hrp then
                             local mPos = cPart.Position
                             local dv   = hrp.Position - mPos
-                            if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 225 then   -- 15² tighter snap
+                            local dsq  = dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z
+                            -- TP if: just acquired (always) OR drifted > 15 units
+                            if raidJustAcquired or dsq > 225 then
                                 killVelocity(hrp); hrp.CFrame = CFrame.new(mPos)
+                                raidJustAcquired = false
                             end
                             if not dpsActive then reqAttack(cTgt) end
                         end
