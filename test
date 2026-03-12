@@ -1817,9 +1817,16 @@ end -- end DPS Boost block
 -- ============================================================
 Tabs.Gen:Section({Title="Auto Raid"})
 Tabs.Gen:Dropdown({Title="Select Raid Map", Flag="RaidMap",
-    Values={"Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town"},
+    Values={"Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town","Double Dungeons"},
     Value="Namex Planet",
-    Callback=function(v) getgenv().selRaidMap=v end})
+    Callback=function(v)
+        if v == "Double Dungeons" then
+            getgenv().isDD = true
+        else
+            getgenv().isDD = false
+            getgenv().selRaidMap = v
+        end
+    end})
 Tabs.Gen:Dropdown({Title="Difficulty", Flag="RaidDiff",
     Values={"Easy","Medium","Hard","Nightmare"},
     Value="Easy",
