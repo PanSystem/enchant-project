@@ -1435,14 +1435,90 @@ local safeDMGLimit   = 2000000
 local safeBoostUntil = 0
 getgenv().safeBoostActive = false
 
--- Mob targeting state
+-- ── Unit folder + debounce tracking ──────────────────────────────────────────
+-- We watch every unit's Debounce BoolValue via Changed events.
+-- When ALL units flip to true simultaneously, we fire EQ immediately.
+-- This is event-driven — zero polling, zero per-frame overhead for EQ.
+-- ─────────────────────────────────────────────────────────────────────────────
+local _unitConns  = {}   -- { [unit] = {debConn, rmConn} }
+local _debounce   = {}   -- { [unit] = bool }  current Debounce value per unit
+local _unitCount  = 0    -- number of tracked units
+local _folderConn = nil  -- ChildAdded on the player folder
+local _plrFolder  = nil  -- the server units folder for this player
+
+local function _fireEQ()
+    if not dpsActive then return end
+    if os.clock() < safeBoostUntil then return end
+    R.Byte:FireServer(DPS_EQ)
+end
+
+-- Check if all placed units have Debounce == true, fire EQ if so
+local function _checkAllDebounce()
+    if _unitCount == 0 then return end
+    for _, v in next, _debounce do
+        if not v then return end
+    end
+    -- All true — fire EQ immediately
+    _fireEQ()
+end
+
+-- Attach Changed + removal listeners to one unit
+local function _trackUnit(unit)
+    if _unitConns[unit] then return end   -- already tracked
+    local dv = unit:FindFirstChild("Debounce")
+    _debounce[unit] = dv and dv.Value or false
+    _unitCount = _unitCount + 1
+
+    local debConn, rmConn
+    if dv then
+        debConn = dv.Changed:Connect(function(val)
+            _debounce[unit] = val
+            if val then _checkAllDebounce() end
+        end)
+    end
+    rmConn = unit.AncestorRemoving:Connect(function()
+        if debConn then debConn:Disconnect() end
+        rmConn:Disconnect()
+        _unitConns[unit]  = nil
+        _debounce[unit]   = nil
+        _unitCount = math.max(0, _unitCount - 1)
+    end)
+    _unitConns[unit] = { debConn, rmConn }
+end
+
+local function _untrackAll()
+    for _, conns in next, _unitConns do
+        for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    end
+    _unitConns = {}; _debounce = {}; _unitCount = 0
+end
+
+-- Connect to the player's server unit folder; track existing + future units
+local function _connectUnitFolder(folder)
+    _plrFolder = folder
+    for _, unit in ipairs(folder:GetChildren()) do
+        _trackUnit(unit)
+    end
+    if _folderConn then pcall(function() _folderConn:Disconnect() end) end
+    _folderConn = folder.ChildAdded:Connect(function(unit)
+        _trackUnit(unit)
+    end)
+end
+
+local function _disconnectUnitFolder()
+    if _folderConn then pcall(function() _folderConn:Disconnect() end); _folderConn = nil end
+    _untrackAll()
+    _plrFolder = nil
+end
+
+-- ── Mob targeting state ───────────────────────────────────────────────────────
 local _mob      = nil
 local _mobPart  = nil
 local _scanFnDPS= nil
 local _scanTick = 0
 local _chkTick  = 0
 
--- AA keepalive
+-- ── AA keepalive ──────────────────────────────────────────────────────────────
 local _aaConn = nil
 local _aaHB   = nil
 local _lastAA = 0
@@ -1489,24 +1565,18 @@ local function stopAAKeepalive()
     _doAAOff()
 end
 
--- folder-change connections (for cleanup only)
-local _folderConns = {}
-
 -- ── Master heartbeat ──────────────────────────────────────────────────────────
--- Design: EQ fires EVERY frame, unconditionally — no unit-cache gate, no debounce
--- gate, no condition that can block the signal. ATK/CLK also fire every frame.
--- Safe-boost is the ONLY thing that can pause EQ (explicit user feature).
--- Mob snap + req still runs per-frame when a target is locked.
+-- ATK + CLK fire every frame (unchanged).
+-- EQ is handled purely by event (_checkAllDebounce) — NOT polled here.
+-- This loop only handles ATK/CLK/SafeBoost/MobSnap/Req.
 -- ─────────────────────────────────────────────────────────────────────────────
 local _hb = nil
 
 local function startMasterHB()
     if _hb then _hb:Disconnect(); _hb = nil end
 
-    -- Upvalue all hot paths — zero global lookup inside the loop
     local _RB      = R.Byte
     local _RR      = R.Req
-    local _EQ      = DPS_EQ
     local _ATK     = ATK_BUF
     local _CLK     = CLK_BUF
     local _killVel = killVelocity
@@ -1538,17 +1608,9 @@ local function startMasterHB()
             end
         end
 
-        -- 5. EQ every frame — NO blocking conditions
-        if _clock() >= safeBoostUntil then
-            _RB:FireServer(_EQ)
-            _RB:FireServer(_EQ)
-            _RB:FireServer(_EQ)
-        end
-
-        -- 6. Mob snap & attack req
+        -- 5. Mob snap & attack req
         if not _scanFnDPS then return end
 
-        -- Validate current mob every 2 frames
         _chkTick = _chkTick + 1
         if _chkTick >= 2 then
             _chkTick = 0
@@ -1557,7 +1619,6 @@ local function startMasterHB()
             end
         end
 
-        -- Scan for new mob when none locked
         if not _mob then
             _scanTick = _scanTick + 1
             if _scanTick >= 2 then
@@ -1568,19 +1629,17 @@ local function startMasterHB()
 
         if not _mob or not _mobPart then return end
 
-        -- Snap to mob position (X/Z only, preserve Y)
         if _mobPart.Parent then
-            local mp  = _mobPart.Position
-            local hrpP= hrp.Position
-            local dx  = hrpP.X - mp.X
-            local dz  = hrpP.Z - mp.Z
-            if dx*dx + dz*dz > 4 then   -- 2-stud radius = tighter snap
+            local mp   = _mobPart.Position
+            local hrpP = hrp.Position
+            local dx   = hrpP.X - mp.X
+            local dz   = hrpP.Z - mp.Z
+            if dx*dx + dz*dz > 4 then
                 _killVel(hrp)
                 hrp.CFrame = _CF(mp.X, hrpP.Y, mp.Z)
             end
         end
 
-        -- Mob name (cached after first lookup)
         local mn = _mobNC[_mob]
         if not mn then
             mn = _validMN(_mob)
@@ -1590,8 +1649,6 @@ local function startMasterHB()
                 _mob = nil; return
             end
         end
-
-        -- Fire Req every frame, double for throughput
         _RR:FireServer(mn, "Mouse")
         _RR:FireServer(mn, "Mouse")
     end)
@@ -1603,12 +1660,10 @@ local function dpsCleanup_impl()
     _mob = nil; _mobPart = nil; _scanFnDPS = nil
     _scanTick = 0; _chkTick = 0
 
-    pcall(function() R.Byte:FireServer(DPS_EQ) end)
+    _disconnectUnitFolder()
 
     if _hb then pcall(function() _hb:Disconnect() end); _hb = nil end
     stopAAKeepalive()
-    for _, c in next, _folderConns do pcall(function() c:Disconnect() end) end
-    _folderConns = {}
     stopDPSPrecision()
 end
 dpsCleanup = dpsCleanup_impl
@@ -1643,9 +1698,22 @@ Tabs.Pre:Toggle({
         startAAKeepalive()
         startMasterHB()
 
-        -- Set scan fn based on active auto-attack mode
-        task.defer(function()
+        -- Connect unit folder for event-driven EQ + set scan fn
+        task.spawn(function()
             if not dpsActive then return end
+            -- Locate the player's server unit folder
+            local unitsRoot = WorldsFolder:FindFirstChild("Units")
+                           or WorldsFolder:WaitForChild("Units", 10)
+            if not unitsRoot or not dpsActive then return end
+            local srvRoot = unitsRoot:FindFirstChild("Server")
+                         or unitsRoot:WaitForChild("Server", 10)
+            if not srvRoot or not dpsActive then return end
+            local plrFolder = srvRoot:FindFirstChild(myName)
+                           or srvRoot:WaitForChild(myName, 15)
+            if not plrFolder or not dpsActive then return end
+            _connectUnitFolder(plrFolder)
+
+            -- Set scan fn based on active auto-attack mode
             if getgenv().autoNearest then
                 DS.set_scanFn(function() return getNearestMobUniversal(math.huge) end)
             elseif getgenv().autoSel then
