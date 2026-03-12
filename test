@@ -806,8 +806,7 @@ local Tabs = {
     Set  = Window:Tab({Title = "Setting"}),
     Pre  = Window:Tab({Title = "Premium", Locked = not isPremiumUser})
 }
-Window:Tag({
-    Title = "v.0.0.1",Color = Color3.fromHex("#30ff6a"),Radius = 3,})
+Window:Tag({Title = "v.0.0.1",Color = Color3.fromHex("#30ff6a"),Radius = 3,})
 Tabs.Set:Keybind({
     Title="Keybind", Desc="Keybind to open UI", Flag="UIKeybind", Value="RightAlt",
     Callback=function(v) Window:SetToggleKey(Enum.KeyCode[v]) end
@@ -1105,6 +1104,15 @@ TrSec:Toggle({
     end
 })
 
+TrSec:Toggle({
+    Title="Auto Hide Reroll UI", Flag="AutoHideRerollUI", Value=false,
+    Callback=function(state)
+        local pg = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+        local rv = pg and pg:FindFirstChild("Rerolls_Visuals")
+        if rv then rv.Enabled = not state end
+    end
+})
+
 TrSec:Section({Title="Smart Traits"})
 TrSec:Dropdown({Title="Traits Pool", Flag="SmartTraitsPool", Values=trL, Multi=true,
     Callback=function(v) getgenv().selComboT=normalizeMultiVal(v) end})
@@ -1340,7 +1348,6 @@ local function makeFarmConn(getScanFn, flagName, directTp)
         local hum=hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
         if not hum or hum.Health <= 0 then cT=nil; cP=nil; return end
         sendAtk()
-        if dpsActive then return end
         if cT and cP then
             if not cT.Parent or not isMobAlive(cT) then cT=nil; cP=nil
             else
@@ -1349,12 +1356,13 @@ local function makeFarmConn(getScanFn, flagName, directTp)
                     if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 16 then
                         killVelocity(hrp); hrp.CFrame = CFrame.new(cP.Position)
                     end
-                    reqAttack(cT)
+                    -- ส่ง req เฉพาะตอน DPS ปิด; ถ้าเปิด DPS แค่วาปไปหามอน
+                    if not dpsActive then reqAttack(cT) end
                 else
                     local d=hrp.Position-cP.Position
                     local dsq=d.X*d.X+d.Y*d.Y+d.Z*d.Z
                     if dsq > Const.ATK_D_SQ then cT=nil; cP=nil; return end
-                    reqAttack(cT)
+                    if not dpsActive then reqAttack(cT) end
                 end
                 return
             end
@@ -1630,7 +1638,6 @@ local function startMasterHB()
 
     -- Cache all hot paths as upvalues — eliminates global lookup per frame
     local _RB      = R.Byte
-    local _RR      = R.Req
     local _ATK     = ATK_BUF
     local _CLK     = CLK_BUF
     local _killVel = killVelocity
@@ -1640,6 +1647,9 @@ local function startMasterHB()
     local _clock   = os.clock
     local _mobNC   = mobNameCache
     local _CF      = CFrame.new
+
+    -- Snap threshold: 3-stud radius — ลดการกระตุกจากการ warp บ่อยเกินไป
+    local SNAP_SQ  = 9  -- 3*3
 
     _hb = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
@@ -1654,39 +1664,38 @@ local function startMasterHB()
         -- 3. CLK every frame — click throughput
         _RB:FireServer(_CLK)
 
-        -- 4. Safe boost cap check
-        if getgenv().safeBoostActive then
-            local dpsObj = lp:FindFirstChild("DPS")
-            if dpsObj and dpsObj.Value >= safeDMGLimit then
-                safeBoostUntil = _clock() + 5.0
-            end
-        end
-
-        -- 5. Fallback EQ poll every 3 frames (safety net for missed events)
+        -- 4. Safe boost cap check (every 4 frames — ลด overhead)
         _fallbackTk = _fallbackTk + 1
-        if _fallbackTk >= 3 then
+        if _fallbackTk >= 4 then
             _fallbackTk = 0
+            if getgenv().safeBoostActive then
+                local dpsObj = lp:FindFirstChild("DPS")
+                if dpsObj and dpsObj.Value >= safeDMGLimit then
+                    safeBoostUntil = _clock() + 5.0
+                end
+            end
+            -- Fallback EQ poll ทุก 4 frame (safety net — หลักยังเป็น event-driven)
             if _clock() >= safeBoostUntil then
                 _tryFireEQ()
             end
         end
 
-        -- 6. Mob snap + attack req
+        -- 5. Mob snap — วาปไปหามอน ไม่ส่ง req (DPS Boost ทำ damage ด้วย EQ/ATK)
         if not _scanFnDPS then return end
 
-        -- Validate current mob every 2 frames
+        -- Validate current mob every 3 frames
         _chkTick = _chkTick + 1
-        if _chkTick >= 2 then
+        if _chkTick >= 3 then
             _chkTick = 0
             if _mob and (not _mob.Parent or not _alive(_mob)) then
                 _mob = nil; _mobPart = nil
             end
         end
 
-        -- Scan for new target every 2 frames when none locked
+        -- Scan for new target every 3 frames when none locked
         if not _mob then
             _scanTick = _scanTick + 1
-            if _scanTick >= 2 then
+            if _scanTick >= 3 then
                 _scanTick = 0
                 _mob, _mobPart = _scanFnDPS()
             end
@@ -1694,32 +1703,18 @@ local function startMasterHB()
 
         if not _mob or not _mobPart then return end
 
-        -- Snap to mob X/Z (tight 2-stud snap)
+        -- Snap X/Z เท่านั้น — ไม่แตะ Y เพื่อลดการกระตุก
         if _mobPart.Parent then
             local mp   = _mobPart.Position
             local hrpP = hrp.Position
             local dx   = hrpP.X - mp.X
             local dz   = hrpP.Z - mp.Z
-            if dx*dx + dz*dz > 4 then
+            if dx*dx + dz*dz > SNAP_SQ then
                 _killVel(hrp)
                 hrp.CFrame = _CF(mp.X, hrpP.Y, mp.Z)
             end
         end
-
-        -- Mob name (cached after first lookup)
-        local mn = _mobNC[_mob]
-        if not mn then
-            mn = _validMN(_mob)
-            if type(mn) == "string" and mn ~= "" and mn ~= "nil" then
-                _mobNC[_mob] = mn
-            else
-                _mob = nil; return
-            end
-        end
-
-        -- Double Req per frame for maximum attack throughput
-        _RR:FireServer(mn, "Mouse")
-        _RR:FireServer(mn, "Mouse")
+        -- NOTE: ไม่ส่ง R.Req เมื่อ DPS active — EQ + ATK ทำ damage แทน
     end)
 end
 
@@ -1752,9 +1747,9 @@ DS = {
 
 -- ── UI Controls ───────────────────────────────────────────────
 Tabs.Pre:Input({
-    Title = "Damage Boost Safe",
-    Desc  = "",
-    Value = "3000000", Placeholder = "Set Limit Damage",
+    Title = "💀 Safe DMG Limit",
+    Desc  = "หยุด EQ ชั่วคราว 5s เมื่อ DMG เกิน limit",
+    Value = "2000000", Placeholder = "e.g. 2000000",
     Callback = function(v)
         local n = tonumber(v)
         if n then safeDMGLimit = math.max(n, 1000) end
@@ -1762,9 +1757,9 @@ Tabs.Pre:Input({
 })
 
 Tabs.Pre:Input({
-    Title = "Damage Boost",
-    Desc  = "",
-    Value = "0.35", Placeholder = "Set Damage Boost",
+    Title = "⚡ Apex Cadence (s)",
+    Desc  = "ช่วงเวลาขั้นต่ำระหว่าง EQ burst  (0 = ไม่จำกัด)",
+    Value = "0", Placeholder = "e.g. 0  /  0.05  /  0.1",
     Callback = function(v)
         local n = tonumber(v)
         if n then apexCadence = math.max(n, 0) end
@@ -2290,15 +2285,11 @@ Tabs.Gen:Toggle({
                         killVelocity(hrp); hrp.CFrame = CFrame.new(cRiftPart.Position)
                     end
 
-                    if now - _reqLast >= 0.025 then
+                    -- ส่ง req เฉพาะตอน DPS ปิด
+                    if not dpsActive and now - _reqLast >= 0.025 then
                         _reqLast = now
                         R.Req:FireServer(cRiftMob.Name, "Mouse")
                         pendingRequests[cRiftMob] = now
-                    end
-
-                    if dpsActive and now - _reEqLast >= 2.0 then
-                        _reEqLast = now
-                        pcall(function() R.Byte:FireServer(buffer.fromstring("\026\000")) end)
                     end
                 end)
 
@@ -2770,7 +2761,8 @@ Tabs.Gen:Toggle({
                         if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 16 then
                             killVelocity(hrp); hrp.CFrame = CFrame.new(mPos)
                         end
-                        reqAttack(cBoss)
+                        -- ส่ง req เฉพาะตอน DPS ปิด
+                        if not dpsActive then reqAttack(cBoss) end
                     end
                 end)
 
@@ -3157,7 +3149,8 @@ Tabs.Gen:Toggle({
                             if dv.X*dv.X+dv.Y*dv.Y+dv.Z*dv.Z > 16 then
                                 killVelocity(hrp); hrp.CFrame=CFrame.new(mPos)
                             end
-                            reqAttack(cTgt)
+                            -- ส่ง req เฉพาะตอน DPS ปิด
+                            if not dpsActive then reqAttack(cTgt) end
                         end
                     end
                 end)
