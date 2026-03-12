@@ -69,20 +69,19 @@ local Priority = {
     RIFT  = 5,
 }
 
--- Shared state — single source of truth
 local State = {
     currentPriority = Priority.NONE,
-    riftActive      = false,   -- Rift is being done right now
-    riftDetected    = false,   -- Rift model just spawned (signal)
-    bossActive      = false,   -- Boss fight in progress
-    bossReady       = false,   -- Boss event active and cooldown passed
-    raidActive      = false,   -- Inside a raid session
-    raidFinishing   = false,   -- Raid in POST_FIGHT / WAIT_EXIT phase
-    riftSettling    = false,   -- Short cooldown after rift exits
+    riftActive      = false,
+    riftDetected    = false,
+    bossActive      = false,
+    bossReady       = false,
+    raidActive      = false,
+    raidFinishing   = false,
+    riftSettling    = false,
 }
 
 local function setPriority(p) State.currentPriority = p end
-local function hasPriority(p) return State.currentPriority <= p end -- true if caller's priority >= current
+local function hasPriority(p) return State.currentPriority <= p end
 local function priorityAtLeast(p) return State.currentPriority >= p end
 
 -- ============================================================
@@ -1419,14 +1418,14 @@ Tabs.Gen:Toggle({
 })
 
 -- ============================================================
--- DPS BOOST (Premium)
+-- DPS BOOST (Premium) — APEX EDITION
 -- ============================================================
 Tabs.Pre:Section({Title="DPS Boost"})
 
 local dpsCleanup
 do
 
--- Pre-compute buffers once — zero allocation per frame
+-- Pre-compute buffers — zero allocation per frame
 local DPS_EQ  = buffer.fromstring("\026\000")
 local ATK_BUF = buffer.fromstring("\v")
 local CLK_BUF = buffer.fromstring("\015")
@@ -1435,101 +1434,29 @@ local safeDMGLimit   = 2000000
 local safeBoostUntil = 0
 getgenv().safeBoostActive = false
 
--- ── Unit folder + debounce tracking ──────────────────────────────────────────
--- We watch every unit's Debounce BoolValue via Changed events.
--- When ALL units flip to true simultaneously, we fire EQ immediately.
--- This is event-driven — zero polling, zero per-frame overhead for EQ.
--- ─────────────────────────────────────────────────────────────────────────────
-local _unitConns  = {}   -- { [unit] = {debConn, rmConn} }
-local _debounce   = {}   -- { [unit] = bool }  current Debounce value per unit
-local _unitCount  = 0    -- number of tracked units
-local _folderConn = nil  -- ChildAdded on the player folder
-local _plrFolder  = nil  -- the server units folder for this player
+-- ── Apex Cadence: minimum gap (seconds) between EQ bursts ─────
+-- 0 = no limit, fire as fast as physically possible
+local apexCadence = 0
 
-local function _fireEQ()
-    if not dpsActive then return end
-    if os.clock() < safeBoostUntil then return end
-    R.Byte:FireServer(DPS_EQ)
-end
+-- ── Mob targeting state ────────────────────────────────────────
+local _mob       = nil
+local _mobPart   = nil
+local _scanFnDPS = nil
+local _scanTick  = 0
+local _chkTick   = 0
 
--- Check if all placed units have Debounce == true, fire EQ if so
-local function _checkAllDebounce()
-    if _unitCount == 0 then return end
-    for _, v in next, _debounce do
-        if not v then return end
-    end
-    -- All true — fire EQ immediately
-    _fireEQ()
-end
-
--- Attach Changed + removal listeners to one unit
-local function _trackUnit(unit)
-    if _unitConns[unit] then return end   -- already tracked
-    local dv = unit:FindFirstChild("Debounce")
-    _debounce[unit] = dv and dv.Value or false
-    _unitCount = _unitCount + 1
-
-    local debConn, rmConn
-    if dv then
-        debConn = dv.Changed:Connect(function(val)
-            _debounce[unit] = val
-            if val then _checkAllDebounce() end
-        end)
-    end
-    rmConn = unit.AncestorRemoving:Connect(function()
-        if debConn then debConn:Disconnect() end
-        rmConn:Disconnect()
-        _unitConns[unit]  = nil
-        _debounce[unit]   = nil
-        _unitCount = math.max(0, _unitCount - 1)
-    end)
-    _unitConns[unit] = { debConn, rmConn }
-end
-
-local function _untrackAll()
-    for _, conns in next, _unitConns do
-        for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
-    end
-    _unitConns = {}; _debounce = {}; _unitCount = 0
-end
-
--- Connect to the player's server unit folder; track existing + future units
-local function _connectUnitFolder(folder)
-    _plrFolder = folder
-    for _, unit in ipairs(folder:GetChildren()) do
-        _trackUnit(unit)
-    end
-    if _folderConn then pcall(function() _folderConn:Disconnect() end) end
-    _folderConn = folder.ChildAdded:Connect(function(unit)
-        _trackUnit(unit)
-    end)
-end
-
-local function _disconnectUnitFolder()
-    if _folderConn then pcall(function() _folderConn:Disconnect() end); _folderConn = nil end
-    _untrackAll()
-    _plrFolder = nil
-end
-
--- ── Mob targeting state ───────────────────────────────────────────────────────
-local _mob      = nil
-local _mobPart  = nil
-local _scanFnDPS= nil
-local _scanTick = 0
-local _chkTick  = 0
-
--- ── AA keepalive ──────────────────────────────────────────────────────────────
+-- ── AA keepalive ───────────────────────────────────────────────
 local _aaConn = nil
 local _aaHB   = nil
 local _lastAA = 0
 
 local function _getAABool() return MyData:FindFirstChild("Auto_Attacks") end
-local function _isAAOn()    local v=_getAABool(); return v and v.Value==true end
-local function _doAAOn()    R.Byte:FireServer(AA_ON); _lastAA=os.clock() end
+local function _isAAOn()    local v = _getAABool(); return v and v.Value == true end
+local function _doAAOn()    R.Byte:FireServer(AA_ON); _lastAA = os.clock() end
 local function _doAAOff()   R.Byte:FireServer(AA_OFF) end
 
 local function _wireAA(av)
-    if _aaConn then pcall(function() _aaConn:Disconnect() end); _aaConn=nil end
+    if _aaConn then pcall(function() _aaConn:Disconnect() end); _aaConn = nil end
     _aaConn = av:GetPropertyChangedSignal("Value"):Connect(function()
         if not dpsActive or av.Value then return end
         _doAAOn()
@@ -1539,14 +1466,12 @@ end
 local function startAAKeepalive()
     _doAAOn()
     local av = _getAABool()
-    if av then
-        _wireAA(av)
+    if av then _wireAA(av)
     else
         task.spawn(function()
             local dl = os.clock() + 30
             while os.clock() < dl and dpsActive do
-                task.wait(0.3)
-                av = _getAABool()
+                task.wait(0.3); av = _getAABool()
                 if av then _wireAA(av); break end
             end
         end)
@@ -1560,21 +1485,149 @@ local function startAAKeepalive()
 end
 
 local function stopAAKeepalive()
-    if _aaConn then pcall(function() _aaConn:Disconnect() end); _aaConn=nil end
-    if _aaHB   then pcall(function() _aaHB:Disconnect()   end); _aaHB=nil   end
+    if _aaConn then pcall(function() _aaConn:Disconnect() end); _aaConn = nil end
+    if _aaHB   then pcall(function() _aaHB:Disconnect()   end); _aaHB   = nil end
     _doAAOff()
 end
 
--- ── Master heartbeat ──────────────────────────────────────────────────────────
--- ATK + CLK fire every frame (unchanged).
--- EQ is handled purely by event (_checkAllDebounce) — NOT polled here.
--- This loop only handles ATK/CLK/SafeBoost/MobSnap/Req.
--- ─────────────────────────────────────────────────────────────────────────────
-local _hb = nil
+-- ── Apex Event-Driven EQ ──────────────────────────────────────
+-- สมรรถนะสูงสุด: ยิง EQ ทันทีที่ ALL units Debounce = true
+-- ใช้ :GetPropertyChangedSignal แทน polling → latency = 0 frame
+-- Heartbeat fallback ทุก 3 frame เป็น safety net
+local _debConns  = {}   -- [unit] = RBXScriptConnection
+local _unitDebMap = {}  -- [unit] = BoolValue ref
+local _lastEQFire = 0
+local _folderConns = {}
+
+-- Cached unit folder for Apex EQ
+local _apexFldrCache   = nil
+local _apexFldrChkTime = 0
+
+local function _getApexFolder()
+    if _apexFldrCache and _apexFldrCache.Parent then return _apexFldrCache end
+    local now = os.clock()
+    if now - _apexFldrChkTime < 0.5 then return nil end
+    _apexFldrChkTime = now
+    local root = WorldsFolder:FindFirstChild("Units")
+    local srv  = root and root:FindFirstChild("Server")
+    _apexFldrCache = srv and srv:FindFirstChild(myName) or nil
+    return _apexFldrCache
+end
+
+-- Fast inline all-debounce check — zero table creation
+local function _allDebounceReady()
+    local hasAny = false
+    for unit, deb in next, _unitDebMap do
+        if not unit.Parent then
+            _unitDebMap[unit] = nil
+            if _debConns[unit] then
+                pcall(function() _debConns[unit]:Disconnect() end)
+                _debConns[unit] = nil
+            end
+        else
+            if not deb.Value then return false end
+            hasAny = true
+        end
+    end
+    return hasAny
+end
+
+-- Fire EQ burst — called from Changed event OR fallback
+local function _tryFireEQ()
+    if not dpsActive then return end
+    local now = os.clock()
+    if now - _lastEQFire < apexCadence then return end
+    if now < safeBoostUntil then return end
+    if getgenv().safeBoostActive then
+        local dpsObj = lp:FindFirstChild("DPS")
+        if dpsObj and dpsObj.Value >= safeDMGLimit then
+            safeBoostUntil = now + 5.0; return
+        end
+    end
+    if not _allDebounceReady() then return end
+    _lastEQFire = now
+    -- Triple burst for maximum throughput
+    R.Byte:FireServer(DPS_EQ)
+    R.Byte:FireServer(DPS_EQ)
+    R.Byte:FireServer(DPS_EQ)
+end
+
+-- Wire a single unit → listen for Debounce flip to true
+local function _wireUnit(unit)
+    if not unit or not unit.Parent then return end
+    if _debConns[unit] then return end  -- already wired
+    local deb = unit:FindFirstChild("Debounce")
+    if not deb then
+        -- Search descendants (some units nest it)
+        for _, v in next, unit:GetDescendants() do
+            if v.Name == "Debounce" and v:IsA("BoolValue") then deb = v; break end
+        end
+    end
+    if not deb then return end
+    _unitDebMap[unit] = deb
+    -- Fire only when this unit's Debounce becomes true
+    _debConns[unit] = deb:GetPropertyChangedSignal("Value"):Connect(function()
+        if deb.Value and dpsActive then
+            _tryFireEQ()
+        end
+    end)
+end
+
+-- Wire entire folder, watch ChildAdded/Removed
+local function _wireFolder(folder)
+    if not folder then return end
+    for _, unit in next, folder:GetChildren() do
+        _wireUnit(unit)
+    end
+    local addC = folder.ChildAdded:Connect(function(child)
+        task.defer(function() if dpsActive then _wireUnit(child) end end)
+    end)
+    local remC = folder.ChildRemoved:Connect(function(child)
+        if _debConns[child] then
+            pcall(function() _debConns[child]:Disconnect() end)
+            _debConns[child]   = nil
+            _unitDebMap[child] = nil
+        end
+    end)
+    _folderConns[#_folderConns + 1] = addC
+    _folderConns[#_folderConns + 1] = remC
+end
+
+-- Full setup: clear old + re-wire
+local function _setupApexEQ()
+    for _, conn in next, _debConns do pcall(function() conn:Disconnect() end) end
+    _debConns = {}; _unitDebMap = {}
+    for _, c in next, _folderConns do pcall(function() c:Disconnect() end) end
+    _folderConns = {}
+    _apexFldrCache = nil; _apexFldrChkTime = 0
+
+    local folder = _getApexFolder()
+    if folder then
+        _wireFolder(folder)
+    else
+        -- Retry for up to 12 seconds
+        task.spawn(function()
+            local dl = os.clock() + 12
+            while os.clock() < dl and dpsActive do
+                task.wait(0.3)
+                local f = _getApexFolder()
+                if f then _wireFolder(f); break end
+            end
+        end)
+    end
+end
+
+-- ── Master Heartbeat ──────────────────────────────────────────
+-- Fires ATK + CLK every frame unconditionally
+-- EQ handled by events; fallback poll every 3 frames
+-- Mob snap + Req every frame when target locked
+local _hb         = nil
+local _fallbackTk = 0
 
 local function startMasterHB()
     if _hb then _hb:Disconnect(); _hb = nil end
 
+    -- Cache all hot paths as upvalues — eliminates global lookup per frame
     local _RB      = R.Byte
     local _RR      = R.Req
     local _ATK     = ATK_BUF
@@ -1590,17 +1643,17 @@ local function startMasterHB()
     _hb = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
 
-        -- 1. Character check
+        -- 1. Character guard
         local hrp = _getHRP()
         if not hrp then return end
 
-        -- 2. ATK every frame
+        -- 2. ATK every frame — base attack throughput
         _RB:FireServer(_ATK)
 
-        -- 3. CLK every frame
+        -- 3. CLK every frame — click throughput
         _RB:FireServer(_CLK)
 
-        -- 4. Safe boost DPS cap check
+        -- 4. Safe boost cap check
         if getgenv().safeBoostActive then
             local dpsObj = lp:FindFirstChild("DPS")
             if dpsObj and dpsObj.Value >= safeDMGLimit then
@@ -1608,9 +1661,19 @@ local function startMasterHB()
             end
         end
 
-        -- 5. Mob snap & attack req
+        -- 5. Fallback EQ poll every 3 frames (safety net for missed events)
+        _fallbackTk = _fallbackTk + 1
+        if _fallbackTk >= 3 then
+            _fallbackTk = 0
+            if _clock() >= safeBoostUntil then
+                _tryFireEQ()
+            end
+        end
+
+        -- 6. Mob snap + attack req
         if not _scanFnDPS then return end
 
+        -- Validate current mob every 2 frames
         _chkTick = _chkTick + 1
         if _chkTick >= 2 then
             _chkTick = 0
@@ -1619,6 +1682,7 @@ local function startMasterHB()
             end
         end
 
+        -- Scan for new target every 2 frames when none locked
         if not _mob then
             _scanTick = _scanTick + 1
             if _scanTick >= 2 then
@@ -1629,6 +1693,7 @@ local function startMasterHB()
 
         if not _mob or not _mobPart then return end
 
+        -- Snap to mob X/Z (tight 2-stud snap)
         if _mobPart.Parent then
             local mp   = _mobPart.Position
             local hrpP = hrp.Position
@@ -1640,6 +1705,7 @@ local function startMasterHB()
             end
         end
 
+        -- Mob name (cached after first lookup)
         local mn = _mobNC[_mob]
         if not mn then
             mn = _validMN(_mob)
@@ -1649,18 +1715,26 @@ local function startMasterHB()
                 _mob = nil; return
             end
         end
+
+        -- Double Req per frame for maximum attack throughput
         _RR:FireServer(mn, "Mouse")
         _RR:FireServer(mn, "Mouse")
     end)
 end
 
+-- Cleanup
 local function dpsCleanup_impl()
     dpsActive      = false
     safeBoostUntil = 0
     _mob = nil; _mobPart = nil; _scanFnDPS = nil
-    _scanTick = 0; _chkTick = 0
+    _scanTick = 0; _chkTick = 0; _fallbackTk = 0
 
-    _disconnectUnitFolder()
+    -- Disconnect all EQ event wires
+    for _, conn in next, _debConns do pcall(function() conn:Disconnect() end) end
+    _debConns = {}; _unitDebMap = {}
+    for _, c in next, _folderConns do pcall(function() c:Disconnect() end) end
+    _folderConns = {}
+    _apexFldrCache = nil; _apexFldrChkTime = 0
 
     if _hb then pcall(function() _hb:Disconnect() end); _hb = nil end
     stopAAKeepalive()
@@ -1668,25 +1742,37 @@ local function dpsCleanup_impl()
 end
 dpsCleanup = dpsCleanup_impl
 
--- Expose for Auto Attack toggles
+-- Expose scanFn for Auto Attack toggles
 DS = {
     get_scanFn = function()   return _scanFnDPS end,
     set_scanFn = function(fn) _scanFnDPS = fn   end,
-    clear_mob  = function()   _mob=nil; _mobPart=nil end,
+    clear_mob  = function()   _mob = nil; _mobPart = nil end,
 }
 
+-- ── UI Controls ───────────────────────────────────────────────
 Tabs.Pre:Input({
-    Title="Safe DMG Limit", Desc="",
-    Value="2500000", Placeholder="Dmg Limit",
-    Callback=function(v)
+    Title = "💀 Safe DMG Limit",
+    Desc  = "หยุด EQ ชั่วคราว 5s เมื่อ DMG เกิน limit",
+    Value = "2000000", Placeholder = "e.g. 2000000",
+    Callback = function(v)
         local n = tonumber(v)
         if n then safeDMGLimit = math.max(n, 1000) end
     end
 })
 
+Tabs.Pre:Input({
+    Title = "⚡ Apex Cadence (s)",
+    Desc  = "ช่วงเวลาขั้นต่ำระหว่าง EQ burst  (0 = ไม่จำกัด)",
+    Value = "0", Placeholder = "e.g. 0  /  0.05  /  0.1",
+    Callback = function(v)
+        local n = tonumber(v)
+        if n then apexCadence = math.max(n, 0) end
+    end
+})
+
 Tabs.Pre:Toggle({
-    Title="DPS Boost", Flag="DPSBoost", Value=false,
-    Callback=function(state)
+    Title = "DPS Boost", Flag = "DPSBoost", Value = false,
+    Callback = function(state)
         if state and not isPremiumUser then
             pcall(function() Window.Flags["DPSBoost"]:Set(false) end); return
         end
@@ -1694,31 +1780,19 @@ Tabs.Pre:Toggle({
 
         dpsActive      = true
         safeBoostUntil = 0
+        _fallbackTk    = 0
 
         startAAKeepalive()
+        _setupApexEQ()
         startMasterHB()
 
-        -- Connect unit folder for event-driven EQ + set scan fn
-        task.spawn(function()
+        task.defer(function()
             if not dpsActive then return end
-            -- Locate the player's server unit folder
-            local unitsRoot = WorldsFolder:FindFirstChild("Units")
-                           or WorldsFolder:WaitForChild("Units", 10)
-            if not unitsRoot or not dpsActive then return end
-            local srvRoot = unitsRoot:FindFirstChild("Server")
-                         or unitsRoot:WaitForChild("Server", 10)
-            if not srvRoot or not dpsActive then return end
-            local plrFolder = srvRoot:FindFirstChild(myName)
-                           or srvRoot:WaitForChild(myName, 15)
-            if not plrFolder or not dpsActive then return end
-            _connectUnitFolder(plrFolder)
-
-            -- Set scan fn based on active auto-attack mode
             if getgenv().autoNearest then
                 DS.set_scanFn(function() return getNearestMobUniversal(math.huge) end)
             elseif getgenv().autoSel then
                 DS.set_scanFn(function()
-                    if State.riftActive or State.bossActive or State.raidActive then return nil,nil end
+                    if State.riftActive or State.bossActive or State.raidActive then return nil, nil end
                     return findSelectedMob()
                 end)
             end
@@ -1727,9 +1801,9 @@ Tabs.Pre:Toggle({
 })
 
 Tabs.Pre:Toggle({
-    Title="Safe Boost", Desc="หยุด 5s เมื่อ DMG เกิน limit",
-    Flag="SafeBoost", Value=false,
-    Callback=function(state)
+    Title = "Safe Boost", Desc = "หยุด 5s เมื่อ DMG เกิน limit",
+    Flag = "SafeBoost", Value = false,
+    Callback = function(state)
         if state and not isPremiumUser then
             pcall(function() Window.Flags["SafeBoost"]:Set(false) end); return
         end
@@ -1738,7 +1812,7 @@ Tabs.Pre:Toggle({
     end
 })
 
-end -- end DPS block
+end -- end DPS Boost block
 
 -- ============================================================
 -- AUTO RIFT  (Priority: HIGHEST)
@@ -1969,7 +2043,6 @@ local function exitRiftViaTravel(cancelFn)
     end
 end
 
--- Signal: rift detected → wake up all systems
 local riftDetectedSignal = false
 local riftDetectedModel  = nil
 
@@ -2089,14 +2162,12 @@ Tabs.Gen:Toggle({
                 riftDetectedSignal = false
                 riftDetectedModel  = nil
 
-                -- ── Rift starts: take full priority ──
                 getgenv().doRift   = true
                 State.riftActive   = true
                 State.riftDetected = true
                 summonPaused       = true
                 summonPauseReason  = "rift"
 
-                -- Interrupt Raid immediately
                 if getgenv().raidInP or getRaidSession() then
                     pcall(function() R.RaidsL:FireServer("Leave") end)
                     task.wait(0.08)
@@ -2272,10 +2343,9 @@ Tabs.Gen:Toggle({
 
                 if cancelFn() then riftCleanup(); getgenv().riftSettling=false; setupWatchers(); continue end
 
-                -- Settling phase — let other systems know rift is done but settling
                 getgenv().riftSettling = true
                 State.riftSettling     = true
-                State.riftActive       = false -- rift done, just settling
+                State.riftActive       = false
 
                 if autoRiftRun and not cancelFn() then
                     lastStgUp = 0
@@ -2323,10 +2393,6 @@ Tabs.Gen:Toggle({
 
 -- ============================================================
 -- AUTO ABANDON VILLAGE (Priority: 2nd — Boss)
--- Logic:
---   • Rift active → skip, wait for rift done
---   • Not in raid → go immediately
---   • In raid → finish raid first, but if rift comes → abort to rift
 -- ============================================================
 Tabs.Gen:Section({Title="Abandon Village"})
 
@@ -2470,7 +2536,6 @@ local function waitUntilBackAtLobby(cancelFn)
     local last = -99
     while os.clock() < dl do
         if cancelFn and cancelFn() then return false end
-        -- If rift appears, abort immediately
         if State.riftActive then return false end
 
         lastStgUp = 0
@@ -2506,11 +2571,9 @@ Tabs.Gen:Toggle({
         if not state then bossFail(); return end
 
         task.spawn(function()
-            -- cancelBoss: stop if toggle off OR rift is active (rift takes priority)
             local function cancelBoss()
                 return not getgenv().autoBoss
             end
-            -- shouldYieldToRift: pause boss if rift comes in
             local function riftInterrupt()
                 return State.riftActive or State.riftDetected
             end
@@ -2528,7 +2591,6 @@ Tabs.Gen:Toggle({
                 if cancelBoss() then break end
                 clearBossConn()
 
-                -- ── Wait if rift is running ──
                 if riftInterrupt() then
                     getgenv().bossWaiting = false
                     while getgenv().autoBoss and (State.riftActive or State.riftSettling) do
@@ -2544,7 +2606,6 @@ Tabs.Gen:Toggle({
                     while os.clock() < waitDl and not isBossReady() do
                         if not getgenv().autoBoss then break end
                         if bossSignalFired then bossSignalFired = false; break end
-                        -- Also break out if rift fires while waiting
                         if riftInterrupt() then break end
                         task.wait(0.5)
                     end
@@ -2553,16 +2614,13 @@ Tabs.Gen:Toggle({
 
                 getgenv().bossWaiting = true
 
-                -- ── If in Raid → wait for raid to finish (but abort if rift comes) ──
                 if State.raidActive then
                     local raidWaitDl = os.clock() + 600
                     while State.raidActive and os.clock() < raidWaitDl do
                         if cancelBoss() then break end
-                        -- Rift takes priority over waiting for raid
                         if riftInterrupt() then break end
                         task.wait(0.3)
                     end
-                    -- If rift fired, yield to it
                     if riftInterrupt() then
                         getgenv().bossWaiting = false
                         while getgenv().autoBoss and (State.riftActive or State.riftSettling) do
@@ -2576,7 +2634,6 @@ Tabs.Gen:Toggle({
                 if cancelBoss() then continue end
                 if not isBossReady() then getgenv().bossWaiting=false; continue end
 
-                -- ── Begin Boss ──
                 summonPaused=true; summonPauseReason="boss"
                 getgenv().doBoss=true; State.bossActive=true
 
@@ -2693,7 +2750,6 @@ Tabs.Gen:Toggle({
                 clearBossConn()
                 Conns.boss = RunService.Heartbeat:Connect(function()
                     if not fighting or not getgenv().autoBoss then return end
-                    -- If rift fires mid-boss, stop combat loop (rift connector takes over)
                     if State.riftActive then fighting=false; return end
                     sendAtk()
                     if cBoss and (not cBoss.Parent or not isMobAlive(cBoss)) then
@@ -2719,7 +2775,6 @@ Tabs.Gen:Toggle({
 
                 local bossDl = os.clock() + 300
                 while fighting and getgenv().autoBoss and os.clock() < bossDl do
-                    -- Rift → abort boss combat immediately
                     if State.riftActive then fighting=false; break end
                     lastTgtUp=0
                     local alive = false
@@ -2744,7 +2799,6 @@ Tabs.Gen:Toggle({
                 getgenv().bossWaiting = false
                 State.bossActive    = false
 
-                -- If rift fired, wait for it to finish before continuing
                 if riftInterrupt() then
                     if summonPaused and summonPauseReason=="boss" then
                         summonPaused=false; summonPauseReason=nil
@@ -2771,10 +2825,6 @@ Tabs.Gen:Toggle({
 
 -- ============================================================
 -- RAID SYSTEM (Priority: 3rd)
--- Logic:
---   • Rift detected → abort/leave raid immediately
---   • Boss ready + not in raid → let boss go (raid waits for next cycle)
---   • Boss ready + in raid → finish raid first (unless rift fires)
 -- ============================================================
 Tabs.Gen:Section({Title="Raid System"})
 Tabs.Gen:Dropdown({Title="Raid Map", Flag="RaidMap",
@@ -2824,7 +2874,6 @@ local function countRaidMobs(forceRefresh)
     return count
 end
 
--- raidYieldCheck: must stop if rift is active
 local function raidYieldCheck()
     return State.riftActive or State.riftSettling
 end
@@ -3047,7 +3096,6 @@ Tabs.Gen:Toggle({
 
             local function setRaidSt(s)
                 st=s; getgenv().raidSt=s; stateEnterTime=os.clock()
-                -- Update shared State flags
                 State.raidActive   = (s == "FIGHTING" or s == "WAIT_ENTER" or s == "POST_FIGHT")
                 State.raidFinishing = (s == "POST_FIGHT" or s == "WAIT_EXIT")
             end
@@ -3077,7 +3125,6 @@ Tabs.Gen:Toggle({
                     if not inCombat or not getgenv().autoRaid then
                         if Conns.raid then Conns.raid:Disconnect(); Conns.raid=nil end; return
                     end
-                    -- Rift fires → stop combat immediately (rift system handles everything)
                     if raidYieldCheck() then inCombat=false; return end
                     sendAtk()
                     if cTgt and cPart then
@@ -3148,9 +3195,7 @@ Tabs.Gen:Toggle({
                 if not waitUntilAlive(cancelRaid, 20) then break end
                 if not getgenv().autoRaid then break end
 
-                -- ── RIFT INTERRUPT (highest priority) ──
                 if raidYieldCheck() then
-                    -- If we're inside a raid, leave it
                     if getRaidSession() then
                         pcall(function() R.RaidsL:FireServer("Leave") end)
                         task.wait(0.08)
@@ -3158,7 +3203,6 @@ Tabs.Gen:Toggle({
                     end
                     abortRaid(); stopSessionWatch(); stopMobWatch()
 
-                    -- Wait for rift to fully complete
                     while getgenv().autoRaid and State.riftActive do task.wait(0.10) end
                     local settleDl = os.clock() + 8.0
                     while getgenv().autoRaid and State.riftSettling and os.clock() < settleDl do
@@ -3187,11 +3231,8 @@ Tabs.Gen:Toggle({
                     continue
                 end
 
-                -- ── BOSS CHECK: if boss is ready and we're not in a raid, yield ──
-                -- (If we ARE in a raid, we finish the raid first)
                 if st == "FIND_PAD" or st == "TELEPORT" or st == "IDLE" or st == "CREATE" then
                     if isBossReady() and getgenv().autoBoss and not State.raidActive then
-                        -- Boss ready and we're not committed to a raid → pause, let boss go
                         task.wait(1.0)
                         continue
                     end
@@ -3227,7 +3268,6 @@ Tabs.Gen:Toggle({
                 elseif st=="FIND_PAD" then
                     getgenv().raidInP=false; State.raidActive=false
 
-                    -- If boss event is ready and autoBoss is on, wait (let boss go first)
                     if isBossReady() and getgenv().autoBoss then
                         task.wait(1.0); continue
                     end
@@ -3346,7 +3386,6 @@ Tabs.Gen:Toggle({
                     if not inCombat then startRaidCombat() end
                     local fDl=os.clock()+300
                     while os.clock()<fDl and getgenv().autoRaid do
-                        -- Rift fires → abort raid immediately
                         if raidYieldCheck() then
                             cleanupCombat()
                             pcall(function() R.RaidsL:FireServer("Leave") end)
@@ -3775,7 +3814,6 @@ lp.CharacterRemoving:Connect(function()
     getgenv().safeBoostActive = false
     pcall(function() R.Hatch:FireServer(false) end)
 
-    -- Reset all State flags
     State.riftActive    = false
     State.riftDetected  = false
     State.riftSettling  = false
