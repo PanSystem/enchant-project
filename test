@@ -3887,10 +3887,10 @@ Tabs.Misc:Button({Title="Remove All Effects", Callback=function()
     local vis = Workspace:FindFirstChild("Visual")
     if vis then pcall(function() vis:Destroy() end) end
     local EFFECT_CLASSES = {
-        ParticleEmitter=true, Trail=true, Beam=true,
+        ParticleEmitter=false, Trail=true, Beam=false,
         Fire=true, Smoke=true, Sparkles=true,
-        SelectionBox=true, BillboardGui=true,
-        SpecialMesh=true
+        SelectionBox=false, BillboardGui=false,
+        SpecialMesh=false
     }
     local function sweepEffects(root)
         for _, v in next, root:GetDescendants() do
