@@ -237,7 +237,7 @@ local Tabs = {
     Config   = SecTab.ConfigTabSection:Tab({Title = "Configs",   Icon = "chevron-right"}),
 }
 Window:EditOpenButton({Title = "Open Enchant Hub", Icon = "monitor"})
-Window:Tag({Title = "v.0.1.0", Color = Color3.fromHex("#30ff6a"), Radius = 3})
+Window:Tag({Title = "v.0.1.1", Color = Color3.fromHex("#30ff6a"), Radius = 3})
 Tabs.Setting:Keybind({
     Title = "Keybind", Flag = "UIKeybind", Value = "RightAlt",
     Callback = function(v) Window:SetToggleKey(Enum.KeyCode[v]) end
@@ -254,7 +254,6 @@ local SecGeneral = {
     MiscFeatures     = Tabs.Misc:Section({Title = "Features", Opened = true}),
 }
 
--- [ระบบ Fast Rerolls ใน Premium]
 local fastRerollEnabled = false
 SecGeneral.SecPremiumMisc:Toggle({
     Title = "Fast Reroll",
@@ -451,10 +450,18 @@ local function waitTraitChange(unitFolder, slotToRoll, oldVal, timeout)
     return false
 end
 
+-- ฟังก์ชันตัดเลขโรมันออกเพื่อใช้ Lock Traits ได้อย่างปลอดภัย
+local function getBaseTraitName(name)
+    local base = string.gsub(name, " III$", "")
+    base = string.gsub(base, " II$", "")
+    base = string.gsub(base, " I$", "")
+    return base
+end
+
 local autoTraitsEnabled = false
 local autoTalentsEnabled = false
 local customQueue = {} 
-local unitStates = {} 
+local unitStates = {} -- "waiting", "rolling", "done"
 
 local function getUnitInfoText(unitFolder, isRolling, tDone, talDone)
     if not unitFolder then return "No unit selected." end
@@ -548,14 +555,12 @@ dropdowns.SelectInventoryUnits = Tabs.Unit:Dropdown({
     Callback = function(selectedOptions)
         local opts = selectedOptions or {}
         
-        -- นำเข้าคิวเฉพาะที่เพิ่งติ๊กใหม่
         for _, o in ipairs(opts) do
             if not table.find(customQueue, o) then
                 table.insert(customQueue, o)
                 unitStates[o] = "waiting"
             end
         end
-        -- ลบตัวที่ถูกเอาติ๊กออก
         for i = #customQueue, 1, -1 do
             if not table.find(opts, customQueue[i]) then
                 unitStates[customQueue[i]] = nil
@@ -630,7 +635,6 @@ task.spawn(function()
                 end
             end
             
-            -- ถ้าเสร็จหมดแล้วให้โชว์ตัวสุดท้ายค้างไว้เฉยๆ
             if not activeUnitDisp then
                 local lastUnit = inventoryUnitsMap[customQueue[#customQueue]]
                 unitInfoParagraph:SetDesc(getUnitInfoText(lastUnit, false, true, true))
@@ -641,10 +645,6 @@ task.spawn(function()
             
             if not activeUnit or not activeUnit.Parent then
                 unitStates[activeUnitDisp] = "done"
-                -- ให้ลบออกจากคิวอัตโนมัติถ้าหามอนไม่เจอจริงๆ
-                for i, v in ipairs(customQueue) do
-                    if v == activeUnitDisp then table.remove(customQueue, i); break end
-                end
                 continue
             end
             
@@ -663,7 +663,7 @@ task.spawn(function()
             local targetBuffsClean = {}
             local isDataLoading = false
             
-            -- [1] เช็คเงื่อนไข Traits แบบแม่นยำ
+            -- [1] เช็คเงื่อนไข Traits (แม่นยำด้วย Internal Target)
             local priIsGood = false
             local subIsGood = false
             if autoTraitsEnabled and #targetTraits > 0 then
@@ -680,13 +680,14 @@ task.spawn(function()
                     local internal = trait_check[uiTraitName]
                     if internal then internalTargets[internal] = true end
                     
-                    -- หั่นเลขโรมันออกให้เนียนกริบ (ป้องกัน Error table.insert)
-                    local cleanName = uiTraitName:gsub(" III$", ""):gsub(" II$", ""):gsub(" I$", "")
+                    -- หั่นเลขโรมันออกเพื่อใช้ในการส่งล็อค (Lock Array) อย่างปลอดภัย
+                    local cleanName = getBaseTraitName(uiTraitName)
                     if not table.find(targetBuffsClean, cleanName) then
                         table.insert(targetBuffsClean, cleanName)
                     end
                 end
                 
+                -- เช็คผลลัพธ์ว่าถึงเป้าหมายที่เลือกไว้เป๊ะๆ หรือไม่
                 if internalTargets[currentPri] then priIsGood = true end
                 if internalTargets[currentSub] then subIsGood = true end
                 
@@ -744,7 +745,7 @@ task.spawn(function()
                 talentsDone = true
             end
             
-            -- หยุดรอถ้าระบบกำลังโหลดค่า Value ใหม่
+            -- ป้องกันการส่งคำสั่งสุ่มซ้ำซ้อนขณะเกมกำลังโหลดค่าใหม่
             if isDataLoading then
                 unitInfoParagraph:SetDesc("Loading Unit Data... Please Wait.")
                 continue
@@ -752,13 +753,13 @@ task.spawn(function()
             
             unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, true, traitsDone, talentsDone))
             
-            -- [3] ทำงานส่ง Remote สลับคิว
+            -- [3] ทำงานส่ง Remote 
             if traitsDone and talentsDone then
                 unitStates[activeUnitDisp] = "done"
                 unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, false, true, true))
                 task.wait(1) 
                 
-                -- ลบออกจากคิวเพื่อให้คิวถัดไปเลื่อนขึ้นมาทำงาน (ยิงออกแค่หลังบ้าน ไม่แตะ Dropdown)
+                -- ลบออกจากคิวเพื่อให้สคริปต์สลับไปตัวต่อไปทันที!
                 for i, v in ipairs(customQueue) do
                     if v == activeUnitDisp then
                         table.remove(customQueue, i)
@@ -800,7 +801,7 @@ end)
 
 
 -- ==========================================
--- [UI Tab : Hide Reroll / Reward (คืนค่าได้ 100%)]
+-- [UI Tab : Hide Reroll / Reward]
 -- ==========================================
 SecGeneral.MiscFeatures:Toggle({
     Title = "Hide Reroll",
@@ -1428,7 +1429,15 @@ task.spawn(function()
         if activeRiftFolder ~= currentRiftFolder then currentRiftFolder = activeRiftFolder; riftStarted = false end
         if activeRaidFolder ~= currentRaidFolder then currentRaidFolder = activeRaidFolder; raidStarted = false end
 
+        -- [ ระบบ Auto Rift สำคัญกว่า Auto Raid ]
         if autoRiftEnabled and riftSpawned then
+            -- ถ้ากำลังลง Raid อยู่ ให้ออกจาก Raid ก่อนไปทำ Rift
+            if currentlyInRaid then
+                pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
+                task.wait(4)
+                continue
+            end
+            
             if insideRift and activeRiftFolder then
                 local targetMon = findRiftMonster()
                 if targetMon then
@@ -1486,7 +1495,7 @@ task.spawn(function()
                     end
 
                     if not isReaperMap then
-                        -- เพิ่มการวาร์ปแวะ Lobby ก่อนตามที่คุณสั่ง
+                        -- แวะ Lobby ให้ระบบโหลดก่อนไป Reaper Society ป้องกันบัคไม่ยอมเข้าแมพ
                         pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
                         task.wait(2)
                         pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Reaper Society"])) end)
