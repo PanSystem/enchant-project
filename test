@@ -237,7 +237,7 @@ local Tabs = {
     Config   = SecTab.ConfigTabSection:Tab({Title = "Configs",   Icon = "chevron-right"}),
 }
 Window:EditOpenButton({Title = "Open Enchant Hub", Icon = "monitor"})
-Window:Tag({Title = "v.0.1.1", Color = Color3.fromHex("#30ff6a"), Radius = 3})
+Window:Tag({Title = "v.0.1.0", Color = Color3.fromHex("#30ff6a"), Radius = 3})
 Tabs.Setting:Keybind({
     Title = "Keybind", Flag = "UIKeybind", Value = "RightAlt",
     Callback = function(v) Window:SetToggleKey(Enum.KeyCode[v]) end
@@ -245,12 +245,12 @@ Tabs.Setting:Keybind({
 
 local SecGeneral = {
     Section_DmgBoost = Tabs.Premium:Section({Title = "Damage Boost", Opened = true}),
-    SecPremiumMisc   = Tabs.Premium:Section({Title = "Premium Misc", Opened = true}),
-    SecModeFarm      = Tabs.Misc:Section({Title = "Farm Setting", Opened = true}),
-    AutoFarm         = Tabs.General:Section({Title = "Auto Farm", Opened = true}),
-    AutoRift         = Tabs.General:Section({Title = "Auto Rift", Opened = true}),
-    AbandonVillage   = Tabs.General:Section({Title = "Abandon Village", Opened = true}),
-    AutoRaid         = Tabs.General:Section({Title = "Auto Raid", Opened = true}),
+    SecPremiumMisc   = Tabs.Premium:Section({Title = "Premium Misc"}),
+    SecModeFarm      = Tabs.Misc:Section({Title = "Farm Setting"}),
+    AutoFarm         = Tabs.General:Section({Title = "Auto Farm"}),
+    AutoRift         = Tabs.General:Section({Title = "Auto Rift"}),
+    AbandonVillage   = Tabs.General:Section({Title = "Abandon Village"}),
+    AutoRaid         = Tabs.General:Section({Title = "Auto Raid"}),
     MiscFeatures     = Tabs.Misc:Section({Title = "Features", Opened = true}),
 }
 
