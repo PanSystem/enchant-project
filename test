@@ -43,7 +43,10 @@ local RaidsEntering   = Workspace:WaitForChild("Raids_Entering")
 local SummonersFolder = Workspace:WaitForChild("Summoners")
 local PlayersData     = ReplicatedStorage:WaitForChild("Players_Data")
 local MyData          = PlayersData:WaitForChild(myName)
-local MyUnits         = MyData:WaitForChild("Inventory"):WaitForChild("Units")
+
+-- ── FIX: MyUnits ต้องดึงจาก MyData โดยตรง ──────────────────
+local MyUnits = MyData:WaitForChild("Inventory"):WaitForChild("Units")
+
 local BossesValue     = ReplicatedStorage:WaitForChild("Values"):WaitForChild("Gamemodes")
                         :WaitForChild("BossFights"):WaitForChild("Bosses")
 local RiftTimeLeft    = ReplicatedStorage:WaitForChild("Values"):WaitForChild("Gamemodes")
@@ -57,43 +60,28 @@ if not SpawnedRiftsFolder then
 end
 
 -- ============================================================
--- PRIORITY MANAGER  (Rift=5 > Raid=3 > Boss=4 > Farm=2 > Summon=1)
+-- PRIORITY MANAGER
 -- ============================================================
-local Priority = {
-    NONE  = 0,
-    SUMMON= 1,
-    FARM  = 2,
-    RAID  = 3,
-    BOSS  = 4,
-    RIFT  = 5,
-}
+local Priority = { NONE=0, SUMMON=1, FARM=2, RAID=3, BOSS=4, RIFT=5 }
 
 local State = {
     currentPriority  = Priority.NONE,
-    -- Rift
     riftActive       = false,
     riftDetected     = false,
     riftSettling     = false,
-    -- Boss
     bossActive       = false,
     bossReady        = false,
-    -- Raid
     raidActive       = false,
     raidFinishing    = false,
-    raidInProgress   = false,   -- ← NEW: true while ANY raid state is running
+    raidInProgress   = false,
 }
 
-local function setPriority(p) State.currentPriority = p end
-local function hasPriority(p) return State.currentPriority <= p end
-local function priorityAtLeast(p) return State.currentPriority >= p end
-
--- Convenience helpers
-local function isRiftBusy()   return State.riftActive or State.riftDetected or State.riftSettling end
-local function isRaidBusy()   return State.raidActive or State.raidFinishing or State.raidInProgress end
+local function isRiftBusy()    return State.riftActive or State.riftDetected or State.riftSettling end
+local function isRaidBusy()    return State.raidActive or State.raidFinishing or State.raidInProgress end
 local function isBossRunning() return State.bossActive end
 
 -- ============================================================
--- SELECTORS & GLOBAL ENV
+-- GLOBAL ENV
 -- ============================================================
 getgenv().selMobs      = {}
 local selDict          = {}
@@ -103,7 +91,6 @@ getgenv().raidExitMode = "Normal"
 getgenv().selSumm      = "Namex Planet"
 getgenv().selTp        = "Lobby"
 getgenv().selSummMode  = "Normal"
-
 getgenv().doRift       = false
 getgenv().doBoss       = false
 getgenv().raidInP      = false
@@ -111,7 +98,6 @@ getgenv().isDD         = false
 getgenv().riftSettling = false
 getgenv().colPurp      = false
 getgenv().bossWaiting  = false
-
 getgenv().unitQueue      = {}
 getgenv().rollingFn      = nil
 getgenv().rollingPhase   = ""
@@ -124,16 +110,12 @@ getgenv().selComboT      = {}
 getgenv().selTalS        = {}
 getgenv().selTalG        = "S"
 getgenv().autoTalRun     = false
-getgenv().selSummMode    = "Normal"
 getgenv().raidSt         = "IDLE"
 getgenv().lastBossKill   = 0
 getgenv().autoSTRun      = false
 getgenv().stDoneSet      = {}
 
-local Conns = {
-    clk=nil, atk=nil, sel=nil, raid=nil, near=nil,
-    boss=nil, uInfo=nil, rift=nil
-}
+local Conns = { clk=nil, atk=nil, sel=nil, raid=nil, near=nil, boss=nil, uInfo=nil, rift=nil }
 
 local autoRiftRun       = false
 local summonPaused      = false
@@ -370,11 +352,8 @@ local function tpForceSnap(part, yOffset)
     yOffset = yOffset or 2
     local targetCF = CFrame.new(part.Position + Vector3.new(0, yOffset, 0))
     for i = 1, 5 do
-        killVelocity(hrp)
-        hrp.CFrame = targetCF
-        task.wait(0.04)
-        local diff = (hrp.CFrame.Position - targetCF.Position).Magnitude
-        if diff <= 3.0 then return true end
+        killVelocity(hrp); hrp.CFrame = targetCF; task.wait(0.04)
+        if (hrp.CFrame.Position - targetCF.Position).Magnitude <= 3.0 then return true end
     end
     return (hrp.CFrame.Position - targetCF.Position).Magnitude <= 5.0
 end
@@ -390,11 +369,8 @@ local function stagedTpToBoss(targetPart, cancelFn)
         if cancelFn and cancelFn() then return false end
         hrp = getHRP(); if not hrp then return false end
         killVelocity(hrp)
-        if dist > 0 then
-            hrp.CFrame = CFrame.new(tPos + dir * dist + Vector3.new(0, 2, 0))
-        else
-            hrp.CFrame = CFrame.new(tPos + Vector3.new(0, 2, 0))
-        end
+        if dist > 0 then hrp.CFrame = CFrame.new(tPos + dir * dist + Vector3.new(0, 2, 0))
+        else hrp.CFrame = CFrame.new(tPos + Vector3.new(0, 2, 0)) end
         task.wait(0.10)
     end
     task.wait(0.15)
@@ -473,24 +449,18 @@ local function reqAttack(mob)
         return
     end
     if isLocked(mob) then pendingRequests[mob] = nil; return end
-
     local mobName = mobNameCache[mob]
     if not mobName then mobName = getValidMobName(mob) end
     if type(mobName) ~= "string" or mobName == "" or mobName == "nil" then
         mobNameCache[mob] = nil; return
     end
-
     if dpsActive then
-        local now = os.clock()
-        local last = pendingRequests[mob]
+        local now = os.clock(); local last = pendingRequests[mob]
         if last and (now - last < 0.03) then return end
         pendingRequests[mob] = now
-        R.Req:FireServer(mobName, "Mouse")
-        return
+        R.Req:FireServer(mobName, "Mouse"); return
     end
-
-    local now  = os.clock()
-    local last = pendingRequests[mob]
+    local now  = os.clock(); local last = pendingRequests[mob]
     if last and (now - last < Const.REQ_RATE) then return end
     R.Req:FireServer(mobName, "Mouse")
     pendingRequests[mob] = now
@@ -551,11 +521,7 @@ local dpsPrecisionConn = nil
 local dpsCurrentMob    = nil
 local dpsCurrentPart   = nil
 
-local DS = { scanFn=nil, mob=nil, part=nil, eqState=0, eqNext=0,
-             hb=nil, aaConn=nil, aaHB=nil, lastAA=0,
-             conns={}, desc={}, folder={},
-             debs={}, unitCount=0, allHitFlag=false, anyResetFlag=false,
-             scanTick=0, chkTick=0 }
+local DS = { scanFn=nil, mob=nil, part=nil }
 
 local function stopDPSPrecision()
     if dpsPrecisionConn then dpsPrecisionConn:Disconnect(); dpsPrecisionConn=nil end
@@ -565,7 +531,7 @@ end
 local cachedSession, lastSessUp = nil, 0
 local function getRaidSession()
     local now = os.clock()
-    if now-lastSessUp>0.10 then   -- ← faster refresh 0.15→0.10
+    if now-lastSessUp>0.10 then
         lastSessUp=now; cachedSession=nil
         if RaidsVisual then
             for _, f in next, RaidsVisual:GetChildren() do
@@ -588,10 +554,6 @@ end
 local function isBossEventActive()
     return BossesValue and BossesValue.Value
        and BossesValue.Value~="" and BossesValue.Value~=" "
-end
-
-local function getRiftTimeLeft()
-    return RiftTimeLeft and RiftTimeLeft.Value or 0
 end
 
 local function isCharReady(expectedStage)
@@ -653,6 +615,9 @@ local function firePrompt(p)
     end)
 end
 
+-- ============================================================
+-- TRAIT / TALENT TABLES
+-- ============================================================
 local trD2G = {
     ["Assault I"]="Assault_1",["Assault II"]="Assault_2",["Assault III"]="Assault_3",
     ["Genius I"]="Genius_1",  ["Genius II"]="Genius_2",  ["Genius III"]="Genius_3",
@@ -705,12 +670,26 @@ for g, d in pairs(potD) do
 end
 local function lGr(s,v) local t=tVL[s]; return t and t[math.floor(v*10000+0.5)] or nil end
 
+-- ============================================================
+-- FIX: getUF_fn — ดึงจาก MyUnits โดยตรง ไม่ต้อง re-find ทุกครั้ง
+-- ============================================================
 local function getUF_fn(fn)
-    local inv=MyData:FindFirstChild("Inventory"); local u=inv and inv:FindFirstChild("Units")
-    return u and u:FindFirstChild(fn) or nil
+    if not fn then return nil end
+    -- MyUnits อาจ reload หลัง respawn ให้ refresh reference ถ้าหายไป
+    if not MyUnits or not MyUnits.Parent then
+        local inv = MyData:FindFirstChild("Inventory")
+        MyUnits = inv and inv:FindFirstChild("Units") or nil
+    end
+    return MyUnits and MyUnits:FindFirstChild(fn) or nil
 end
+
 local function getUFI()
-    local u={}; if not MyUnits then return {} end
+    local u={}
+    if not MyUnits or not MyUnits.Parent then
+        local inv = MyData:FindFirstChild("Inventory")
+        MyUnits = inv and inv:FindFirstChild("Units") or nil
+    end
+    if not MyUnits then return {} end
     for _,f in next,MyUnits:GetChildren() do
         if f:IsA("Folder") then
             local n=f:FindFirstChild("Nickname")
@@ -722,22 +701,23 @@ local function getUFI()
     table.sort(u,function(a,b) if a.dn==b.dn then return a.fn<b.fn end; return a.dn<b.dn end)
     return u
 end
+
 local function bUDL(ul)
     local dl,fm,nc={},{},{}
     for _,u in ipairs(ul) do nc[u.dn]=(nc[u.dn] or 0)+1 end
     local ni={}
     for _,u in ipairs(ul) do
         local l
-        if nc[u.dn]>1 then
-            ni[u.dn]=(ni[u.dn] or 0)+1; l=u.dn.." #"..ni[u.dn]
+        if nc[u.dn]>1 then ni[u.dn]=(ni[u.dn] or 0)+1; l=u.dn.." #"..ni[u.dn]
         else l=u.dn end
         dl[#dl+1]=l; fm[l]=u.fn
     end
     return dl,fm
 end
+
 local function getSUD(fn)
     if not fn then return nil end
-    local f=MyUnits and MyUnits:FindFirstChild(fn); if not f then return nil end
+    local f=getUF_fn(fn); if not f then return nil end
     return {
         un=f:FindFirstChild("Nickname")      and f.Nickname.Value      or "Unknown",
         lv=f:FindFirstChild("Level")         and f.Level.Value         or 0,
@@ -746,6 +726,7 @@ local function getSUD(fn)
         pt=f:FindFirstChild("Primary_Trait") and f.Primary_Trait.Value or "None"
     }
 end
+
 local function cTS_fn(fn,sn,tg)
     local f=getUF_fn(fn); if not f then return true end
     local pa=f:FindFirstChild("Potentials_Adjustment"); if not pa then return true end
@@ -754,8 +735,10 @@ local function cTS_fn(fn,sn,tg)
     local g=lGr(sn,sv.Value)
     return g and g.layout>=td.layout
 end
+
 local function cTrS_fn(fn,tt,targetList)
-    local tl=normalizeMultiVal(targetList or {}); if not fn or #tl==0 then return #tl==0 end
+    local tl=normalizeMultiVal(targetList or {})
+    if not fn or #tl==0 then return #tl==0 end
     local f=getUF_fn(fn); if not f then return false end
     local to=f:FindFirstChild(tt.."_Trait")
     if not to or not to:IsA("StringValue") then return false end
@@ -769,6 +752,7 @@ local function getSlotRaw(fn,slot)
     local to=f:FindFirstChild(slot.."_Trait")
     return (to and to:IsA("StringValue")) and to.Value or nil
 end
+
 local function smartComboDone(fn,comboList)
     local cl=normalizeMultiVal(comboList or {}); if #cl==0 then return true end
     local subRaw=getSlotRaw(fn,"Sub"); local primRaw=getSlotRaw(fn,"Primary")
@@ -814,58 +798,15 @@ local Tabs = {
     Set  = Window:Tab({Title = "Setting"}),
     Pre  = Window:Tab({Title = "Premium", Locked = not isPremiumUser})
 }
-Window:Tag({Title = "v.0.0.1",Color = Color3.fromHex("#30ff6a"),Radius = 3,})
+Window:Tag({Title = "v.0.0.2", Color = Color3.fromHex("#30ff6a"), Radius = 3})
 Tabs.Set:Keybind({
     Title="Keybind", Desc="Keybind to open UI", Flag="UIKeybind", Value="RightAlt",
     Callback=function(v) Window:SetToggleKey(Enum.KeyCode[v]) end
 })
-Tabs.Set:Section({Title="Config System"})
-local configFolder = "Enchant Premium/Configs"
-if not isfolder(configFolder) then makefolder(configFolder) end
-local function getConfigList()
-    local list={}
-    for _,file in ipairs(listfiles(configFolder)) do
-        if file:match("%.json$") then list[#list+1]=file:match("([^/\\]+)%.json$") end
-    end
-    return #list>0 and list or {"Default"}
-end
-local currentConfig = "Default"
-Tabs.Set:Input({Title="Input Name Config", Callback=function(v) currentConfig=v end})
-local ConfigDropdown = Tabs.Set:Dropdown({
-    Title="Config Dropdown", Values=getConfigList(), Value="Default",
-    Callback=function(v) currentConfig=v end
-})
-Tabs.Set:Button({Title="Create Config", Callback=function()
-    writefile(configFolder.."/"..currentConfig..".json","{}"); pcall(function() ConfigDropdown:Refresh(getConfigList()) end)
-end})
-Tabs.Set:Button({Title="Save Config", Callback=function()
-    local settings={}
-    for key,flag in pairs(Window.Flags) do
-        if key~="Config Dropdown" and key~="UIKeybind" then settings[key]=flag.Value end
-    end
-    writefile(configFolder.."/"..currentConfig..".json", HttpService:JSONEncode(settings))
-end})
-Tabs.Set:Button({Title="Load Config", Callback=function()
-    if isfile(configFolder.."/"..currentConfig..".json") then
-        local data=HttpService:JSONDecode(readfile(configFolder.."/"..currentConfig..".json"))
-        for key,val in pairs(data) do if Window.Flags[key] then Window.Flags[key]:Set(val) end end
-    end
-end})
-Tabs.Set:Button({Title="Deleted Config", Callback=function()
-    if isfile(configFolder.."/"..currentConfig..".json") then
-        delfile(configFolder.."/"..currentConfig..".json"); pcall(function() ConfigDropdown:Refresh(getConfigList()) end)
-    end
-end})
-Tabs.Set:Toggle({Title="Set auto load Config", Flag="AutoLoadConfig", Value=false,
-    Callback=function(v) getgenv()._enchAutoLoad=v end
-})
-Tabs.Set:Button({Title="Copy My HWID", Callback=function()
-    pcall(function()
-        local id = game:GetService("RbxAnalyticsService"):GetClientId()
-        setclipboard(id)
-    end)
-end})
 
+-- ============================================================
+-- UNIT INFO PARAGRAPH
+-- ============================================================
 local uInfoPara = Tabs.Unit:Paragraph({Title="Rolling Unit", Desc="— No unit selected —", Icon="user"})
 local function sTN(r)
     if not r or r=="None" or r=="" then return "—" end
@@ -912,8 +853,8 @@ function uUI()
         local subTargets=normalizeMultiVal(getgenv().selSubT)
         local primTargets=normalizeMultiVal(getgenv().selPrimT)
         local subDone=cTrS_fn(fn,"Sub",subTargets); local primDone=cTrS_fn(fn,"Primary",primTargets)
-        local subMark  = (#subTargets>0)  and (subDone  and " ✅" or (ph=="SUB"      and " 🎯" or " ❌")) or ""
-        local primMark = (#primTargets>0) and (primDone and " ✅" or (ph=="PRIMARY"  and " 🎯" or " ❌")) or ""
+        local subMark  = (#subTargets>0)  and (subDone  and " ✅" or (ph=="SUB"     and " 🎯" or " ❌")) or ""
+        local primMark = (#primTargets>0) and (primDone and " ✅" or (ph=="PRIMARY" and " 🎯" or " ❌")) or ""
         ls[#ls+1]=string.format("  Sub      ›  %s%s", sTN(d.st), subMark)
         ls[#ls+1]=string.format("  Primary ›  %s%s", sTN(d.pt), primMark)
     end
@@ -949,6 +890,9 @@ function uUI()
     uInfoPara:SetDesc(table.concat(ls,"\n"))
 end
 
+-- ============================================================
+-- UNIT DROPDOWN
+-- ============================================================
 local udn,ufm = bUDL(getUFI()); if #udn==0 then udn={"No Units Found"} end
 local UDrop
 
@@ -980,6 +924,9 @@ local function fullRefreshUnits()
     getgenv().unitQueue={}; getgenv().traitsDoneSet={}; getgenv().talentsDoneSet={}
     getgenv().stDoneSet={}; getgenv().rollingFn=nil; getgenv().rollingPhase=""
     getgenv().selSubT={}; getgenv().selPrimT={}; getgenv().selTalS={}; getgenv().selComboT={}
+    -- Refresh MyUnits reference
+    local inv = MyData:FindFirstChild("Inventory")
+    MyUnits = inv and inv:FindFirstChild("Units") or nil
     local flagsToReset={"SubTrait","PrimaryTrait","TalentStats","AutoTraits","AutoTalent","SmartTraits","SmartTraitsPool"}
     for _,fk in ipairs(flagsToReset) do
         pcall(function()
@@ -994,14 +941,9 @@ local function fullRefreshUnits()
 end
 Tabs.Unit:Button({Title="↺  Refresh Units", Callback=function() fullRefreshUnits() end})
 
-local TrSec=Tabs.Unit:Section({Title="Auto Traits", Opened=false})
-TrSec:Dropdown({Title="Sub Trait",     Flag="SubTrait",     Values=trL, Multi=true,
-    Callback=function(v) getgenv().selSubT=normalizeMultiVal(v) end})
-TrSec:Dropdown({Title="Primary Trait", Flag="PrimaryTrait", Values=trL, Multi=true,
-    Callback=function(v) getgenv().selPrimT=normalizeMultiVal(v) end})
-
-local function anyTraitsRunning() return getgenv().autoTRun or getgenv().autoSTRun end
-
+-- ============================================================
+-- FIX: waitTraitChange / waitTalentChange — stable wait loop
+-- ============================================================
 local function waitTraitChange(fn, slotKey, oldVal, runFlagFn, timeout)
     local dl = os.clock() + (timeout or 1.5)
     local changed = false; local conn
@@ -1019,7 +961,7 @@ local function waitTraitChange(fn, slotKey, oldVal, runFlagFn, timeout)
         local f2 = getUF_fn(fn)
         local t2 = f2 and f2:FindFirstChild(slotKey.."_Trait")
         if t2 and t2:IsA("StringValue") and t2.Value ~= oldVal then changed = true; break end
-        task.wait(0.004)
+        task.wait(0.005)
     end
     if conn then pcall(function() conn:Disconnect() end) end
     return changed
@@ -1044,11 +986,22 @@ local function waitTalentChange(fn, stat, oldVal, runFlagFn, timeout)
         local pa2 = f2 and f2:FindFirstChild("Potentials_Adjustment")
         local sv2 = pa2 and pa2:FindFirstChild(stat)
         if sv2 and sv2.Value ~= oldVal then changed = true; break end
-        task.wait(0.004)
+        task.wait(0.005)
     end
     if conn then pcall(function() conn:Disconnect() end) end
     return changed
 end
+
+-- ============================================================
+-- AUTO TRAITS
+-- ============================================================
+local TrSec=Tabs.Unit:Section({Title="Auto Traits", Opened=false})
+TrSec:Dropdown({Title="Sub Trait",     Flag="SubTrait",     Values=trL, Multi=true,
+    Callback=function(v) getgenv().selSubT=normalizeMultiVal(v) end})
+TrSec:Dropdown({Title="Primary Trait", Flag="PrimaryTrait", Values=trL, Multi=true,
+    Callback=function(v) getgenv().selPrimT=normalizeMultiVal(v) end})
+
+local function anyTraitsRunning() return getgenv().autoTRun or getgenv().autoSTRun end
 
 TrSec:Toggle({
     Title="Auto Traits", Flag="AutoTraits", Value=false,
@@ -1069,42 +1022,47 @@ TrSec:Toggle({
                 local entry=queue[qIdx]; local fn=entry.fn
                 getgenv().rollingFn=fn
                 local f=getUF_fn(fn)
-                if not f or f.Name~=fn then
+                if not f then
                     getgenv().traitsDoneSet[fn]=true; qIdx=qIdx+1; task.wait(0.02); continue
                 end
+                -- Roll Sub Trait
                 local st=subT()
                 if #st>0 and not cTrS_fn(fn,"Sub",st) then
                     getgenv().rollingPhase="SUB"
                     local ra={}; for _,d in ipairs(st) do ra[#ra+1]=trD2G[d] or d end
                     while run() and not cTrS_fn(fn,"Sub",st) do
-                        local ff=getUF_fn(fn); if not ff or ff.Name~=fn then break end
+                        local ff=getUF_fn(fn); if not ff then break end
                         local to=ff:FindFirstChild("Sub_Trait")
                         if not to or not to:IsA("StringValue") then break end
                         local old=to.Value
-                        R.Traits:FireServer(fn,"Sub",ra,false)
-                        waitTraitChange(fn,"Sub",old,run,1.5); task.wait(0.01)
+                        pcall(function() R.Traits:FireServer(fn,"Sub",ra,false) end)
+                        waitTraitChange(fn,"Sub",old,run,1.5)
+                        task.wait(0.01)
                     end
                 end
                 if not run() then break end
+                -- Verify sub done
                 if #st>0 and not cTrS_fn(fn,"Sub",st) then
-                    getgenv().rollingPhase=""
-                    getgenv().traitsDoneSet[fn]=false
+                    getgenv().rollingPhase=""; getgenv().traitsDoneSet[fn]=false
                     qIdx=qIdx+1; task.wait(0.02); continue
                 end
+                -- Roll Primary Trait
                 local pt=primT()
                 if #pt>0 and not cTrS_fn(fn,"Primary",pt) then
                     getgenv().rollingPhase="PRIMARY"
                     local ra={}; for _,d in ipairs(pt) do ra[#ra+1]=trD2G[d] or d end
                     while run() and not cTrS_fn(fn,"Primary",pt) do
-                        local ff=getUF_fn(fn); if not ff or ff.Name~=fn then break end
+                        local ff=getUF_fn(fn); if not ff then break end
                         local to=ff:FindFirstChild("Primary_Trait")
                         if not to or not to:IsA("StringValue") then break end
                         local old=to.Value
-                        R.Traits:FireServer(fn,"Primary",ra,false)
-                        waitTraitChange(fn,"Primary",old,run,1.5); task.wait(0.01)
+                        pcall(function() R.Traits:FireServer(fn,"Primary",ra,false) end)
+                        waitTraitChange(fn,"Primary",old,run,1.5)
+                        task.wait(0.01)
                     end
                 end
                 getgenv().rollingPhase=""; getgenv().traitsDoneSet[fn]=true
+                -- Wait for talent if running simultaneously
                 if getgenv().autoTalRun then
                     local wdl=os.clock()+600
                     while run() and getgenv().autoTalRun and not getgenv().talentsDoneSet[fn] and os.clock()<wdl do
@@ -1119,6 +1077,9 @@ TrSec:Toggle({
     end
 })
 
+-- ============================================================
+-- SMART TRAITS
+-- ============================================================
 TrSec:Section({Title="Smart Traits"})
 TrSec:Dropdown({Title="Traits Pool", Flag="SmartTraitsPool", Values=trL, Multi=true,
     Callback=function(v) getgenv().selComboT=normalizeMultiVal(v) end})
@@ -1151,7 +1112,7 @@ TrSec:Toggle({
                 local entry=queue[qIdx]; local fn=entry.fn
                 getgenv().rollingFn=fn
                 local f=getUF_fn(fn)
-                if not f or f.Name~=fn then
+                if not f then
                     getgenv().stDoneSet[fn]=true; getgenv().traitsDoneSet[fn]=true
                     qIdx=qIdx+1; task.wait(0.02); continue
                 end
@@ -1169,14 +1130,14 @@ TrSec:Toggle({
                     if distinct<2 then break end
                     getgenv().rollingPhase="SUB"
                     local subRetry=0
-                    while run() and subRetry<60 do
+                    while run() and subRetry<80 do
                         local sub=getRaw(fn,"Sub")
                         if sub and cSet[sub] then break end
-                        local ff=getUF_fn(fn); if not ff or ff.Name~=fn then break end
+                        local ff=getUF_fn(fn); if not ff then break end
                         local to=ff:FindFirstChild("Sub_Trait")
                         if not to or not to:IsA("StringValue") then break end
                         local old=to.Value
-                        R.Traits:FireServer(fn,"Sub",cArr,false)
+                        pcall(function() R.Traits:FireServer(fn,"Sub",cArr,false) end)
                         waitTraitChange(fn,"Sub",old,run,1.5)
                         subRetry=subRetry+1; task.wait(0.01)
                     end
@@ -1188,15 +1149,15 @@ TrSec:Toggle({
                     if #exArr==0 then break end
                     getgenv().rollingPhase="PRIMARY"
                     local primRetry=0
-                    while run() and primRetry<60 do
+                    while run() and primRetry<80 do
                         if getRaw(fn,"Sub")~=lockedSub then break end
                         local prim=getRaw(fn,"Primary")
                         if prim and cSet[prim] and prim~=lockedSub then break end
-                        local ff=getUF_fn(fn); if not ff or ff.Name~=fn then break end
+                        local ff=getUF_fn(fn); if not ff then break end
                         local to=ff:FindFirstChild("Primary_Trait")
                         if not to or not to:IsA("StringValue") then break end
                         local old=to.Value
-                        R.Traits:FireServer(fn,"Primary",exArr,false)
+                        pcall(function() R.Traits:FireServer(fn,"Primary",exArr,false) end)
                         waitTraitChange(fn,"Primary",old,run,1.5)
                         primRetry=primRetry+1; task.wait(0.01)
                     end
@@ -1218,11 +1179,13 @@ TrSec:Toggle({
     end
 })
 
+-- ============================================================
+-- AUTO TALENT
+-- ============================================================
 local TalSec=Tabs.Unit:Section({Title="Auto Talent", Opened=false})
 TalSec:Dropdown({Title="Stats to Roll", Flag="TalentStats", Values=tSL, Multi=true,
     Callback=function(v) getgenv().selTalS=normalizeMultiVal(v) end})
-TalSec:Dropdown({Title="Target Grade", Flag="TalentGrade",
-    Desc="", Values=gL, Value="S",
+TalSec:Dropdown({Title="Target Grade", Flag="TalentGrade", Values=gL, Value="S",
     Callback=function(v) getgenv().selTalG=v end})
 TalSec:Toggle({
     Title="Auto Talent", Flag="AutoTalent", Value=false,
@@ -1242,19 +1205,19 @@ TalSec:Toggle({
                 local fn=entry.fn
                 if not anyTraitsRunning() then getgenv().rollingFn=fn end
                 local f=getUF_fn(fn)
-                if not f or f.Name~=fn then getgenv().talentsDoneSet[fn]=true; continue end
+                if not f then getgenv().talentsDoneSet[fn]=true; continue end
                 local pa=f:FindFirstChild("Potentials_Adjustment")
                 if not pa then getgenv().talentsDoneSet[fn]=true; continue end
                 for _,stat in ipairs(statList) do
                     if not run() then break end
                     getgenv().rollingPhase="TALENT:"..stat
                     while run() do
-                        local fN=getUF_fn(fn); if not fN or fN.Name~=fn then break end
+                        local fN=getUF_fn(fn); if not fN then break end
                         local paN=fN:FindFirstChild("Potentials_Adjustment"); if not paN then break end
                         local sv=paN:FindFirstChild(stat); if not sv then break end
                         if cTS_fn(fn, stat, getgenv().selTalG) then break end
                         local old=sv.Value
-                        R.Pots:FireServer(fn,"Reroll",stat)
+                        pcall(function() R.Pots:FireServer(fn,"Reroll",stat) end)
                         waitTalentChange(fn, stat, old, run, 1.5)
                     end
                 end
@@ -1273,7 +1236,7 @@ TalSec:Toggle({
 })
 
 -- ============================================================
--- AUTO FARM (General)
+-- AUTO FARM
 -- ============================================================
 Tabs.Gen:Section({Title="Auto Farm"})
 local amc={}
@@ -1358,7 +1321,7 @@ Tabs.Gen:Toggle({
 local function makeFarmConn(getScanFn, flagName, directTp)
     local cT, cP       = nil, nil
     local lastScan     = 0
-    local justAcquired = false   -- flag: TP to mob immediately on new target
+    local justAcquired = false
     return RunService.Heartbeat:Connect(function()
         if not getgenv()[flagName] then return end
         local hrp = getHRP(); if not hrp then cT=nil; cP=nil; return end
@@ -1369,22 +1332,16 @@ local function makeFarmConn(getScanFn, flagName, directTp)
             if not cT.Parent or not isMobAlive(cT) then
                 cT=nil; cP=nil; justAcquired=false
             else
-                -- Update part position in case mob moved
                 local newPt = cT.PrimaryPart or cT:FindFirstChild("HumanoidRootPart")
                 if newPt and newPt.Parent then cP = newPt end
-
-                -- Always TP on fresh acquisition, then maintain proximity
                 local dv  = hrp.Position - cP.Position
                 local dsq = dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z
                 if directTp then
-                    -- TP if: just acquired target OR drifted too far (> 20 units)
                     if justAcquired or dsq > 400 then
-                        killVelocity(hrp)
-                        hrp.CFrame = CFrame.new(cP.Position)
+                        killVelocity(hrp); hrp.CFrame = CFrame.new(cP.Position)
                         justAcquired = false
                     end
                 else
-                    -- Non-direct: drop target if out of attack range
                     if dsq > Const.ATK_D_SQ then cT=nil; cP=nil; justAcquired=false; return end
                 end
                 if not dpsActive then reqAttack(cT) end
@@ -1395,9 +1352,7 @@ local function makeFarmConn(getScanFn, flagName, directTp)
         if now - lastScan < 0.03 then return end
         lastScan = now
         local newT, newP = getScanFn()
-        if newT and newT ~= cT then
-            justAcquired = true   -- new target → force TP next frame
-        end
+        if newT and newT ~= cT then justAcquired = true end
         cT, cP = newT, newP
     end)
 end
@@ -1462,7 +1417,6 @@ Tabs.Pre:Section({Title="DPS Boost"})
 
 local dpsCleanup
 do
-
 local DPS_EQ  = buffer.fromstring("\026\000")
 local ATK_BUF = buffer.fromstring("\v")
 local CLK_BUF = buffer.fromstring("\015")
@@ -1470,15 +1424,12 @@ local CLK_BUF = buffer.fromstring("\015")
 local safeDMGLimit   = 2000000
 local safeBoostUntil = 0
 getgenv().safeBoostActive = false
-
 local apexCadence = 0
-
 local _mob       = nil
 local _mobPart   = nil
 local _scanFnDPS = nil
 local _scanTick  = 0
 local _chkTick   = 0
-
 local _aaConn = nil
 local _aaHB   = nil
 local _lastAA = 0
@@ -1523,11 +1474,10 @@ local function stopAAKeepalive()
     _doAAOff()
 end
 
-local _debConns  = {}
+local _debConns   = {}
 local _unitDebMap = {}
 local _lastEQFire = 0
 local _folderConns = {}
-
 local _apexFldrCache   = nil
 local _apexFldrChkTime = 0
 
@@ -1589,29 +1539,24 @@ local function _wireUnit(unit)
     if not deb then return end
     _unitDebMap[unit] = deb
     _debConns[unit] = deb:GetPropertyChangedSignal("Value"):Connect(function()
-        if deb.Value and dpsActive then
-            _tryFireEQ()
-        end
+        if deb.Value and dpsActive then _tryFireEQ() end
     end)
 end
 
 local function _wireFolder(folder)
     if not folder then return end
-    for _, unit in next, folder:GetChildren() do
-        _wireUnit(unit)
-    end
+    for _, unit in next, folder:GetChildren() do _wireUnit(unit) end
     local addC = folder.ChildAdded:Connect(function(child)
         task.defer(function() if dpsActive then _wireUnit(child) end end)
     end)
     local remC = folder.ChildRemoved:Connect(function(child)
         if _debConns[child] then
             pcall(function() _debConns[child]:Disconnect() end)
-            _debConns[child]   = nil
-            _unitDebMap[child] = nil
+            _debConns[child]   = nil; _unitDebMap[child] = nil
         end
     end)
-    _folderConns[#_folderConns + 1] = addC
-    _folderConns[#_folderConns + 1] = remC
+    _folderConns[#_folderConns+1] = addC
+    _folderConns[#_folderConns+1] = remC
 end
 
 local function _setupApexEQ()
@@ -1620,16 +1565,13 @@ local function _setupApexEQ()
     for _, c in next, _folderConns do pcall(function() c:Disconnect() end) end
     _folderConns = {}
     _apexFldrCache = nil; _apexFldrChkTime = 0
-
     local folder = _getApexFolder()
-    if folder then
-        _wireFolder(folder)
+    if folder then _wireFolder(folder)
     else
         task.spawn(function()
             local dl = os.clock() + 12
             while os.clock() < dl and dpsActive do
-                task.wait(0.3)
-                local f = _getApexFolder()
+                task.wait(0.3); local f = _getApexFolder()
                 if f then _wireFolder(f); break end
             end
         end)
@@ -1641,195 +1583,129 @@ local _fallbackTk = 0
 
 local function startMasterHB()
     if _hb then _hb:Disconnect(); _hb = nil end
-
-    local _RB      = R.Byte
-    local _ATK     = ATK_BUF
-    local _CLK     = CLK_BUF
-    local _killVel = killVelocity
-    local _getHRP  = getHRP
-    local _alive   = isMobAlive
-    local _clock   = os.clock
-    local _CF      = CFrame.new
-
-    local SNAP_SQ  = 9
-
+    local _RB=R.Byte; local _ATK=ATK_BUF; local _CLK=CLK_BUF
+    local _killVel=killVelocity; local _getHRP=getHRP; local _alive=isMobAlive
+    local _clock=os.clock; local _CF=CFrame.new
+    local SNAP_SQ=9
     _hb = RunService.Heartbeat:Connect(function()
         if not dpsActive then return end
-
-        local hrp = _getHRP()
-        if not hrp then return end
-
-        _RB:FireServer(_ATK)
-        _RB:FireServer(_CLK)
-
+        local hrp = _getHRP(); if not hrp then return end
+        _RB:FireServer(_ATK); _RB:FireServer(_CLK)
         _fallbackTk = _fallbackTk + 1
         if _fallbackTk >= 4 then
             _fallbackTk = 0
             if getgenv().safeBoostActive then
                 local dpsObj = lp:FindFirstChild("DPS")
-                if dpsObj and dpsObj.Value >= safeDMGLimit then
-                    safeBoostUntil = _clock() + 5.0
-                end
+                if dpsObj and dpsObj.Value >= safeDMGLimit then safeBoostUntil = _clock() + 5.0 end
             end
-            if _clock() >= safeBoostUntil then
-                _tryFireEQ()
-            end
+            if _clock() >= safeBoostUntil then _tryFireEQ() end
         end
-
         if not _scanFnDPS then return end
-
         _chkTick = _chkTick + 1
         if _chkTick >= 3 then
             _chkTick = 0
-            if _mob and (not _mob.Parent or not _alive(_mob)) then
-                _mob = nil; _mobPart = nil
-            end
+            if _mob and (not _mob.Parent or not _alive(_mob)) then _mob=nil; _mobPart=nil end
         end
-
         if not _mob then
             _scanTick = _scanTick + 1
-            if _scanTick >= 3 then
-                _scanTick = 0
-                _mob, _mobPart = _scanFnDPS()
-            end
+            if _scanTick >= 3 then _scanTick=0; _mob,_mobPart=_scanFnDPS() end
         end
-
         if not _mob or not _mobPart then return end
-
         if _mobPart.Parent then
-            local mp   = _mobPart.Position
-            local hrpP = hrp.Position
-            local dx   = hrpP.X - mp.X
-            local dz   = hrpP.Z - mp.Z
-            if dx*dx + dz*dz > SNAP_SQ then
-                _killVel(hrp)
-                hrp.CFrame = _CF(mp.X, hrpP.Y, mp.Z)
+            local mp=_mobPart.Position; local hrpP=hrp.Position
+            local dx=hrpP.X-mp.X; local dz=hrpP.Z-mp.Z
+            if dx*dx+dz*dz>SNAP_SQ then
+                _killVel(hrp); hrp.CFrame=_CF(mp.X,hrpP.Y,mp.Z)
             end
         end
     end)
 end
 
 local function dpsCleanup_impl()
-    dpsActive      = false
-    safeBoostUntil = 0
-    _mob = nil; _mobPart = nil; _scanFnDPS = nil
-    _scanTick = 0; _chkTick = 0; _fallbackTk = 0
-
-    for _, conn in next, _debConns do pcall(function() conn:Disconnect() end) end
-    _debConns = {}; _unitDebMap = {}
-    for _, c in next, _folderConns do pcall(function() c:Disconnect() end) end
-    _folderConns = {}
-    _apexFldrCache = nil; _apexFldrChkTime = 0
-
-    if _hb then pcall(function() _hb:Disconnect() end); _hb = nil end
-    stopAAKeepalive()
-    stopDPSPrecision()
+    dpsActive=false; safeBoostUntil=0
+    _mob=nil; _mobPart=nil; _scanFnDPS=nil
+    _scanTick=0; _chkTick=0; _fallbackTk=0
+    for _,conn in next,_debConns do pcall(function() conn:Disconnect() end) end
+    _debConns={}; _unitDebMap={}
+    for _,c in next,_folderConns do pcall(function() c:Disconnect() end) end
+    _folderConns={}; _apexFldrCache=nil; _apexFldrChkTime=0
+    if _hb then pcall(function() _hb:Disconnect() end); _hb=nil end
+    stopAAKeepalive(); stopDPSPrecision()
 end
 dpsCleanup = dpsCleanup_impl
 
 DS = {
     get_scanFn = function()   return _scanFnDPS end,
     set_scanFn = function(fn) _scanFnDPS = fn   end,
-    clear_mob  = function()   _mob = nil; _mobPart = nil end,
+    clear_mob  = function()   _mob=nil; _mobPart=nil end,
 }
 
 Tabs.Pre:Input({
-    Title = "Damage Limit",
-    Desc  = "",
-    Value = "3000000", Placeholder = "Damage Limit",
-    Callback = function(v)
-        local n = tonumber(v)
-        if n then safeDMGLimit = math.max(n, 1000) end
-    end
+    Title="Damage Limit", Value="3000000", Placeholder="Damage Limit",
+    Callback=function(v) local n=tonumber(v); if n then safeDMGLimit=math.max(n,1000) end end
 })
-
 Tabs.Pre:Input({
-    Title = "Damage Boost",
-    Desc  = "",
-    Value = "0", Placeholder = "",
-    Callback = function(v)
-        local n = tonumber(v)
-        if n then apexCadence = math.max(n, 0) end
-    end
+    Title="Damage Boost", Value="0", Placeholder="",
+    Callback=function(v) local n=tonumber(v); if n then apexCadence=math.max(n,0) end end
 })
-
 Tabs.Pre:Toggle({
-    Title = "DPS Boost", Flag = "DPSBoost", Value = false,
-    Callback = function(state)
+    Title="DPS Boost", Flag="DPSBoost", Value=false,
+    Callback=function(state)
         if state and not isPremiumUser then
             pcall(function() Window.Flags["DPSBoost"]:Set(false) end); return
         end
         if not state then dpsCleanup(); return end
-
-        dpsActive      = true
-        safeBoostUntil = 0
-        _fallbackTk    = 0
-
-        startAAKeepalive()
-        _setupApexEQ()
-        startMasterHB()
-
+        dpsActive=true; safeBoostUntil=0; _fallbackTk=0
+        startAAKeepalive(); _setupApexEQ(); startMasterHB()
         task.spawn(function()
-            local _RB = R.Byte
-            local _AAON = AA_ON
+            local _RB=R.Byte; local _AAON=AA_ON
             while dpsActive do
-                task.wait(1.5)
-                if not dpsActive then break end
-                local now = os.clock()
-                if now - _lastEQFire >= 1.5 then
+                task.wait(1.5); if not dpsActive then break end
+                local now=os.clock()
+                if now-_lastEQFire>=1.5 then
                     pcall(function() _RB:FireServer(_AAON) end)
                     pcall(function() _RB:FireServer(_AAON) end)
                     _setupApexEQ()
                 end
             end
         end)
-
         task.defer(function()
             if not dpsActive then return end
             if getgenv().autoNearest then
                 DS.set_scanFn(function() return getNearestMobUniversal(math.huge) end)
             elseif getgenv().autoSel then
                 DS.set_scanFn(function()
-                    if State.riftActive or State.bossActive or State.raidActive then return nil, nil end
+                    if State.riftActive or State.bossActive or State.raidActive then return nil,nil end
                     return findSelectedMob()
                 end)
             end
         end)
     end
 })
-
 Tabs.Pre:Toggle({
-    Title = "Safe Boost", Desc = "",
-    Flag = "SafeBoost", Value = false,
-    Callback = function(state)
+    Title="Safe Boost", Flag="SafeBoost", Value=false,
+    Callback=function(state)
         if state and not isPremiumUser then
             pcall(function() Window.Flags["SafeBoost"]:Set(false) end); return
         end
-        getgenv().safeBoostActive = state
-        safeBoostUntil = 0
+        getgenv().safeBoostActive=state; safeBoostUntil=0
     end
 })
-
-end -- end DPS Boost block
+end -- DPS Boost block
 
 -- ============================================================
--- RAID OPTIONS (UI only — Raid loop below)
+-- RAID OPTIONS
 -- ============================================================
 Tabs.Gen:Section({Title="Auto Raid"})
 Tabs.Gen:Dropdown({Title="Select Raid Map", Flag="RaidMap",
     Values={"Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town","Double Dungeons"},
     Value="Namex Planet",
     Callback=function(v)
-        if v == "Double Dungeons" then
-            getgenv().isDD = true
-        else
-            getgenv().isDD = false
-            getgenv().selRaidMap = v
-        end
+        getgenv().isDD=(v=="Double Dungeons")
+        if not getgenv().isDD then getgenv().selRaidMap=v end
     end})
 Tabs.Gen:Dropdown({Title="Difficulty", Flag="RaidDiff",
-    Values={"Easy","Medium","Hard","Nightmare"},
-    Value="Easy",
+    Values={"Easy","Medium","Hard","Nightmare"}, Value="Easy",
     Callback=function(v) getgenv().selRaidDiff=v end})
 Tabs.Gen:Dropdown({Title="Collect Purple Chest", Flag="CollectPurple",
     Values={"No","Yes"}, Value="No",
@@ -1839,7 +1715,7 @@ Tabs.Gen:Dropdown({Title="Mode Exit", Flag="RaidExitMode",
     Callback=function(v) getgenv().raidExitMode=v end})
 
 -- ============================================================
--- AUTO RAID — IMPROVED & STABLE
+-- AUTO RAID — FIXED CHEST COLLECTION
 -- ============================================================
 do
 local function getLobbyPads()
@@ -1861,7 +1737,6 @@ local function getDoubleDungeonPad()
     return (sp and isPadAvailable(sp)) and sp or nil
 end
 
--- ── Mob counting (with force-refresh) ──────────────────────
 local raidMobCountCache, raidMobCountAt = 0, -1
 local function countRaidMobs(forceRefresh)
     local now=os.clock()
@@ -1876,90 +1751,157 @@ local function countRaidMobs(forceRefresh)
     return count
 end
 
--- ── Rift interrupt guard ────────────────────────────────────
 local function raidYieldCheck()
     return State.riftActive or State.riftSettling
 end
 
--- ── Collect reward boxes ────────────────────────────────────
+-- ====================================================================
+-- FIX: collectBoxes — ใช้ session name ค้นหา folder แบบ robust
+-- ====================================================================
 local function collectBoxes()
     if raidYieldCheck() then return end
+
+    -- หา session folder จาก RaidsVisual โดยตรง
     local sessionFolder = nil
     if RaidsVisual then
         for _, f in next, RaidsVisual:GetChildren() do
-            if f.Name:find(myName, 1, true) then sessionFolder = f; break end
+            if f.Name:find(myName, 1, true) then
+                sessionFolder = f; break
+            end
         end
     end
-    if not sessionFolder then return end
-    local rewardsFolder = sessionFolder:FindFirstChild("Configs")
-    rewardsFolder = rewardsFolder and rewardsFolder:FindFirstChild("Others")
-    rewardsFolder = rewardsFolder and rewardsFolder:FindFirstChild("Rewards")
-    if not rewardsFolder then return end
-    local waitDl = os.clock() + 3.0
+    if not sessionFolder then
+        print("[Collect] No session folder found"); return
+    end
+
+    -- FIX: หา Rewards folder ด้วย FindFirstChild recursive แทน chain
+    local rewardsFolder = nil
+
+    -- ลองหา Configs/Others/Rewards ก่อน
+    local configs = sessionFolder:FindFirstChild("Configs")
+    local others  = configs and configs:FindFirstChild("Others")
+    rewardsFolder = others and others:FindFirstChild("Rewards")
+
+    -- ถ้าไม่เจอ ให้ค้นหาแบบ recursive
+    if not rewardsFolder then
+        rewardsFolder = sessionFolder:FindFirstChild("Rewards", true)
+    end
+
+    if not rewardsFolder then
+        print("[Collect] No Rewards folder found in session"); return
+    end
+
+    print("[Collect] Found Rewards folder:", rewardsFolder:GetFullName())
+
+    -- รอให้กล่องโหลด
+    local waitDl = os.clock() + 5.0
     while os.clock() < waitDl and getgenv().autoRaid do
         if raidYieldCheck() then return end
         if #rewardsFolder:GetChildren() > 0 then break end
-        task.wait(0.05)
+        task.wait(0.1)
     end
-    local function getBoxModels()
-        local models = {}
-        for _, child in next, rewardsFolder:GetChildren() do
-            if child:IsA("Model") then
-                if child.Name == "Purple" and not getgenv().colPurp then continue end
-                models[#models + 1] = child
-            end
-        end
-        return models
+
+    if #rewardsFolder:GetChildren() == 0 then
+        print("[Collect] No boxes appeared"); return
     end
-    local function getActivePrompt(model)
+
+    print("[Collect] Boxes found:", #rewardsFolder:GetChildren())
+
+    -- FIX: ฟังก์ชันหา ProximityPrompt แบบ recursive ที่ถูกต้อง
+    local function findActivePrompt(model)
         if not model or not model.Parent then return nil end
+        -- ค้นหาทุก ProximityPrompt ใน model
         for _, v in next, model:GetDescendants() do
             if v:IsA("ProximityPrompt") and v.Enabled then return v end
         end
+        -- ตรวจ model เอง
+        local pp = model:FindFirstChildOfClass("ProximityPrompt")
+        if pp and pp.Enabled then return pp end
         return nil
     end
-    local function getModelPart(model)
-        return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+
+    local function getModelCenterPart(model)
+        if not model or not model.Parent then return nil end
+        if model.PrimaryPart and model.PrimaryPart.Parent then return model.PrimaryPart end
+        return model:FindFirstChildWhichIsA("BasePart")
     end
-    local collectDl = os.clock() + 12.0
+
+    local collectDl = os.clock() + 20.0
     while os.clock() < collectDl and getgenv().autoRaid do
         if raidYieldCheck() then return end
-        local models = getBoxModels()
-        if #models == 0 then break end
+
+        local boxes = rewardsFolder:GetChildren()
+        if #boxes == 0 then break end
+
         local anyActive = false
-        for _, box in ipairs(models) do
+
+        for _, box in ipairs(boxes) do
             if not box or not box.Parent then continue end
             if raidYieldCheck() then return end
-            local prm = getActivePrompt(box); if not prm then continue end
-            anyActive = true
-            local part = getModelPart(box); local hrp = getHRP()
-            if hrp and part then
-                killVelocity(hrp)
-                hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 1.5, 0))
-                task.wait(0.05)
+
+            -- ข้ามกล่อง Purple ถ้าไม่ได้เลือกเก็บ
+            local boxNameLow = string.lower(box.Name)
+            if not getgenv().colPurp and (boxNameLow:find("purple") or boxNameLow=="purple") then
+                continue
             end
-            local fireDl = os.clock() + 3.0
+
+            local prm = findActivePrompt(box)
+            if not prm then continue end
+
+            anyActive = true
+            local part = getModelCenterPart(box)
+
+            -- TP ไปหากล่อง
+            if part and part.Parent then
+                local hrp = getHRP()
+                if hrp then
+                    killVelocity(hrp)
+                    hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 1.5, 0))
+                    task.wait(0.06)
+                end
+            end
+
+            -- Fire prompt ซ้ำจนกว่ากล่องจะหายหรือ prompt disable
+            local fireDl = os.clock() + 4.0
+            local fired  = 0
             while os.clock() < fireDl and getgenv().autoRaid do
                 if raidYieldCheck() then return end
                 if not prm or not prm.Parent or not prm.Enabled then break end
-                hrp = getHRP()
-                if hrp and part and part.Parent then
-                    local dv = hrp.Position - part.Position
-                    if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 4*4 then
-                        killVelocity(hrp)
-                        hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 1.5, 0))
+                if not box or not box.Parent then break end
+
+                -- ยืนยันอยู่ใกล้กล่อง
+                local hrp2 = getHRP()
+                if hrp2 and part and part.Parent then
+                    local dv = hrp2.Position - part.Position
+                    if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 16 then
+                        killVelocity(hrp2)
+                        hrp2.CFrame = CFrame.new(part.Position + Vector3.new(0, 1.5, 0))
                         task.wait(0.04); continue
                     end
                 end
-                firePrompt(prm); task.wait(0.05)
+
+                -- Fire หลายแบบ
+                pcall(function() fireproximityprompt(prm) end)
+                pcall(function()
+                    local tr = prm.Parent:FindFirstChild("TriggerRemote") or prm.Parent:FindFirstChild("Trigger")
+                    if tr and tr:IsA("RemoteEvent") then tr:FireServer() end
+                end)
+                fired = fired + 1
+                task.wait(0.06)
             end
+
+            print(string.format("[Collect] Box '%s' fired %d times", box.Name, fired))
         end
-        if not anyActive then break end
+
+        if not anyActive then
+            print("[Collect] All active boxes done"); break
+        end
         task.wait(0.1)
     end
+
+    print("[Collect] Collection phase complete")
 end
 
--- ── Exit raid (Normal or Stealth) ──────────────────────────
 local function isRaidUIGone()
     local pg = lp:FindFirstChild("PlayerGui")
     local gm = pg and pg:FindFirstChild("Gamemodes")
@@ -1969,21 +1911,17 @@ end
 
 local function exitRaid()
     if getgenv().raidExitMode=="Stealth" then
-        local retries = 0
+        local retries=0
         repeat
             sendTeleport("Lobby")
-            local dl = os.clock() + 3
-            while os.clock() < dl do
-                if isRaidUIGone() then break end
-                task.wait(0.1)
-            end
-            retries = retries + 1
-        until isRaidUIGone() or retries >= 5 or not getgenv().autoRaid
-        task.wait(0.5)
-        return
+            local dl=os.clock()+3
+            while os.clock()<dl do if isRaidUIGone() then break end; task.wait(0.1) end
+            retries=retries+1
+        until isRaidUIGone() or retries>=5 or not getgenv().autoRaid
+        task.wait(0.5); return
     end
-    local exitDl = os.clock() + 12; local lastFireTime = 0
-    while os.clock() < exitDl and getgenv().autoRaid do
+    local exitDl=os.clock()+12; local lastFireTime=0
+    while os.clock()<exitDl and getgenv().autoRaid do
         if raidYieldCheck() then return end
         if isRaidUIGone() then return end
         if not getRaidSession() then break end
@@ -2015,98 +1953,70 @@ local function exitRaid()
             for _=1,3 do
                 if isRaidUIGone() then break end
                 task.wait(0.5); sendTeleport("Lobby"); task.wait(0.5)
-            end
-            break
+            end; break
         end
     end
 end
 
--- ── Precise teleport to stage ──────────────────────────────
 local function preciseTpToStage(targetStage, cancelFn, timeout)
-    timeout = timeout or 20
-    lastStgUp = 0
-
-    if getStg() == targetStage then
-        local char = lp.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        if hrp and hum and hum.Health > 0 and hrp.Position.Y > -50 then return true end
+    timeout=timeout or 20; lastStgUp=0
+    if getStg()==targetStage then
+        local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health>0 and hrp.Position.Y>-50 then return true end
     end
-
     if raidYieldCheck() then return false end
-
-    local buf = teleportBuffers[targetStage]
-    if not buf then return false end
-
-    local deadline = os.clock() + timeout
-    local lastSend = -99
-    local interval = 0.5
-    local confirms = 0
-
-    while os.clock() < deadline do
+    local buf=teleportBuffers[targetStage]; if not buf then return false end
+    local deadline=os.clock()+timeout; local lastSend=-99; local interval=0.5; local confirms=0
+    while os.clock()<deadline do
         if cancelFn and cancelFn() then return false end
         if raidYieldCheck() then return false end
-
-        local now = os.clock()
-        if now - lastSend >= interval then
-            R.Byte:FireServer(buf)
-            lastSend = now; lastStgUp = 0
-            interval = math.min(interval * 1.3, 3.0)
+        local now=os.clock()
+        if now-lastSend>=interval then
+            R.Byte:FireServer(buf); lastSend=now; lastStgUp=0; interval=math.min(interval*1.3,3.0)
         end
-
-        task.wait(0.05); lastStgUp = 0
-
-        if getStg() == targetStage then
-            local char = lp.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            local hum  = char and char:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hrp.Position.Y > -50 and hum.Health > 0 then
-                confirms = confirms + 1
-                if confirms >= 2 then task.wait(0.1); return true end
+        task.wait(0.05); lastStgUp=0
+        if getStg()==targetStage then
+            local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+            local hum=char and char:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hrp.Position.Y>-50 and hum.Health>0 then
+                confirms=confirms+1
+                if confirms>=2 then task.wait(0.1); return true end
                 task.wait(0.08); continue
             end
         end
-        confirms = 0
+        confirms=0
     end
     return false
 end
 
--- ── Snap player onto pad center ────────────────────────────
 local function precisePadSnap(pad)
     if not pad or not pad.Parent then return false end
-    local center = pad:FindFirstChild("Centers") or pad:FindFirstChildWhichIsA("BasePart")
+    local center=pad:FindFirstChild("Centers") or pad:FindFirstChildWhichIsA("BasePart")
     if not center or not center.Parent then return tpTarget(pad) end
-
-    local targetPos = center.Position + Vector3.new(0, 2, 0)
-    local targetCF  = CFrame.new(targetPos)
-
-    for i = 1, 5 do
-        local hrp = getHRP(); if not hrp then return false end
-        killVelocity(hrp); hrp.CFrame = targetCF
-        task.wait(0.06)
-        hrp = getHRP(); if not hrp then return false end
-        if (hrp.Position - targetPos).Magnitude <= 4.0 then return true end
-        hrp.CFrame = targetCF; task.wait(0.05)
+    local targetPos=center.Position+Vector3.new(0,2,0); local targetCF=CFrame.new(targetPos)
+    for i=1,5 do
+        local hrp=getHRP(); if not hrp then return false end
+        killVelocity(hrp); hrp.CFrame=targetCF; task.wait(0.06)
+        hrp=getHRP(); if not hrp then return false end
+        if (hrp.Position-targetPos).Magnitude<=4.0 then return true end
+        hrp.CFrame=targetCF; task.wait(0.05)
     end
-
-    local hrp = getHRP()
-    if not hrp then return false end
-    return (hrp.Position - targetPos).Magnitude <= 6.0
+    local hrp=getHRP(); if not hrp then return false end
+    return (hrp.Position-targetPos).Magnitude<=6.0
 end
 
 local function isHomeStageReady(targetStage)
-    lastStgUp = 0
-    if getStg() ~= targetStage then return false end
-    local char = lp.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-    return hrp and hum and hrp.Position.Y > -50 and hum.Health > 0
+    lastStgUp=0
+    if getStg()~=targetStage then return false end
+    local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+    local hum=char and char:FindFirstChildOfClass("Humanoid")
+    return hrp and hum and hrp.Position.Y>-50 and hum.Health>0
 end
 
--- ── Helper: wait for rift + rift-settling to clear ─────────
 local function waitRiftClear(cancelFn, timeout)
-    local dl = os.clock() + (timeout or 300)
-    while os.clock() < dl do
+    local dl=os.clock()+(timeout or 300)
+    while os.clock()<dl do
         if cancelFn and cancelFn() then return false end
         if not State.riftActive and not State.riftSettling then return true end
         task.wait(0.15)
@@ -2122,115 +2032,92 @@ Tabs.Gen:Toggle({
         if not state then
             if Conns.raid then Conns.raid:Disconnect(); Conns.raid=nil end
             getgenv().raidInP=false; getgenv().raidSt="IDLE"
-            State.raidActive    = false
-            State.raidFinishing = false
-            State.raidInProgress = false
+            State.raidActive=false; State.raidFinishing=false; State.raidInProgress=false
             raidMobCountAt=-1
             if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
             return
         end
 
         task.spawn(function()
-            -- ─ state machine variables ─
-            local st = "IDLE"
-            local pads, pIdx, cAtt = {}, 1, 0
-            local inCombat = false
-            local stateEnterTime = os.clock()
-            local lastCreateTime = 0
-            local cTgt, cPart    = nil, nil
-            local sessionCreated = false
-            local createAttempts = 0
+            local st="IDLE"
+            local pads,pIdx,cAtt={},1,0
+            local inCombat=false
+            local stateEnterTime=os.clock()
+            local lastCreateTime=0
+            local cTgt,cPart=nil,nil
+            local sessionCreated=false
+            local createAttempts=0
 
-            -- helpers
             local function setRaidSt(s)
-                st = s; getgenv().raidSt = s; stateEnterTime = os.clock()
-                -- State flags: active during fight states; finishing during cleanup
-                State.raidActive     = (s == "FIGHTING" or s == "WAIT_ENTER" or s == "POST_FIGHT")
-                State.raidFinishing  = (s == "POST_FIGHT" or s == "WAIT_EXIT")
-                State.raidInProgress = (s ~= "IDLE")
+                st=s; getgenv().raidSt=s; stateEnterTime=os.clock()
+                State.raidActive    =(s=="FIGHTING" or s=="WAIT_ENTER" or s=="POST_FIGHT")
+                State.raidFinishing =(s=="POST_FIGHT" or s=="WAIT_EXIT")
+                State.raidInProgress=(s~="IDLE")
             end
-            local function stateAge() return os.clock() - stateEnterTime end
+            local function stateAge() return os.clock()-stateEnterTime end
             local function sg()       return getgenv().isDD and "Dungeons Town" or "Lobby" end
             local function cancelRaid() return not getgenv().autoRaid end
 
             local function cleanupCombat()
-                inCombat = false
-                if Conns.raid then Conns.raid:Disconnect(); Conns.raid = nil end
-                cTgt = nil; cPart = nil; raidMobCountAt = -1
+                inCombat=false
+                if Conns.raid then Conns.raid:Disconnect(); Conns.raid=nil end
+                cTgt=nil; cPart=nil; raidMobCountAt=-1
             end
 
             local function fullReset()
                 cleanupCombat()
-                pcall(function() R.RaidsL:FireServer("Leave") end)
-                task.wait(0.12)
-                getgenv().raidInP     = false
-                State.raidActive      = false
-                State.raidFinishing   = false
-                State.raidInProgress  = false
-                sessionCreated        = false
-                createAttempts        = 0
-                if summonPaused and summonPauseReason == "raid" then
-                    summonPaused = false; summonPauseReason = nil
-                end
+                pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.12)
+                getgenv().raidInP=false
+                State.raidActive=false; State.raidFinishing=false; State.raidInProgress=false
+                sessionCreated=false; createAttempts=0
+                if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                 setRaidSt("IDLE")
             end
 
-            -- ─ Heartbeat combat loop ─
             local function startRaidCombat()
                 if Conns.raid then Conns.raid:Disconnect() end
-                inCombat = true; cTgt = nil; cPart = nil; raidMobCountAt = -1
-                local raidJustAcquired = false   -- force-TP on new target
-                Conns.raid = RunService.Heartbeat:Connect(function()
+                inCombat=true; cTgt=nil; cPart=nil; raidMobCountAt=-1
+                local raidJustAcquired=false
+                Conns.raid=RunService.Heartbeat:Connect(function()
                     if not inCombat or not getgenv().autoRaid then
-                        if Conns.raid then Conns.raid:Disconnect(); Conns.raid = nil end
-                        return
+                        if Conns.raid then Conns.raid:Disconnect(); Conns.raid=nil end; return
                     end
-                    if raidYieldCheck() then inCombat = false; return end
+                    if raidYieldCheck() then inCombat=false; return end
                     sendAtk()
-
-                    -- validate current target
                     if cTgt and cPart then
                         if not cTgt.Parent or not isMobAlive(cTgt) or not isRaidMob(cTgt) then
-                            cTgt = nil; cPart = nil; raidJustAcquired = false
+                            cTgt=nil; cPart=nil; raidJustAcquired=false
                         else
-                            -- refresh part in case mob moved
-                            local newPt = cTgt.PrimaryPart or cTgt:FindFirstChild("HumanoidRootPart")
-                            if newPt and newPt.Parent then cPart = newPt end
+                            local newPt=cTgt.PrimaryPart or cTgt:FindFirstChild("HumanoidRootPart")
+                            if newPt and newPt.Parent then cPart=newPt end
                         end
                     end
-
-                    -- scan for nearest raid mob
                     if not cTgt then
-                        local hrp = getHRP()
+                        local hrp=getHRP()
                         if hrp then
-                            local hPos = hrp.Position; local bestSq = math.huge
-                            lastTgtUp = 0
-                            for _, v in next, ServerTargets:GetChildren() do
-                                if isRaidMob(v) and v.Name:sub(1,5) == "Raids" then
-                                    local pt = v.PrimaryPart or v:FindFirstChild("HumanoidRootPart")
+                            local hPos=hrp.Position; local bestSq=math.huge
+                            lastTgtUp=0
+                            for _,v in next,ServerTargets:GetChildren() do
+                                if isRaidMob(v) and v.Name:sub(1,5)=="Raids" then
+                                    local pt=v.PrimaryPart or v:FindFirstChild("HumanoidRootPart")
                                     if pt then
-                                        local dx = hPos.X - pt.Position.X
-                                        local dz = hPos.Z - pt.Position.Z
-                                        local dsq = dx*dx + dz*dz
-                                        if dsq < bestSq then bestSq = dsq; cTgt = v; cPart = pt end
+                                        local dx=hPos.X-pt.Position.X; local dz=hPos.Z-pt.Position.Z
+                                        local dsq=dx*dx+dz*dz
+                                        if dsq<bestSq then bestSq=dsq; cTgt=v; cPart=pt end
                                     end
                                 end
                             end
-                            if cTgt then raidJustAcquired = true end  -- new target → TP immediately
+                            if cTgt then raidJustAcquired=true end
                         end
                     end
-
-                    -- teleport + attack
                     if cTgt and cPart then
-                        local hrp = getHRP()
+                        local hrp=getHRP()
                         if hrp then
-                            local mPos = cPart.Position
-                            local dv   = hrp.Position - mPos
-                            local dsq  = dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z
-                            -- TP if: just acquired (always) OR drifted > 15 units
-                            if raidJustAcquired or dsq > 225 then
-                                killVelocity(hrp); hrp.CFrame = CFrame.new(mPos)
-                                raidJustAcquired = false
+                            local mPos=cPart.Position; local dv=hrp.Position-mPos
+                            local dsq=dv.X*dv.X+dv.Y*dv.Y+dv.Z*dv.Z
+                            if raidJustAcquired or dsq>225 then
+                                killVelocity(hrp); hrp.CFrame=CFrame.new(mPos)
+                                raidJustAcquired=false
                             end
                             if not dpsActive then reqAttack(cTgt) end
                         end
@@ -2238,481 +2125,332 @@ Tabs.Gen:Toggle({
                 end)
             end
 
-            -- ─ Signal watchers ─
-            local sessionSignalConn = nil
+            local sessionSignalConn=nil
             local function startSessionWatch()
                 if sessionSignalConn or not RaidsVisual then return end
-                sessionSignalConn = RaidsVisual.ChildAdded:Connect(function(child)
-                    if child.Name:find(myName, 1, true) then
-                        sessionCreated = true; createAttempts = 0
+                sessionSignalConn=RaidsVisual.ChildAdded:Connect(function(child)
+                    if child.Name:find(myName,1,true) then
+                        sessionCreated=true; createAttempts=0
                     end
                 end)
             end
             local function stopSessionWatch()
-                if sessionSignalConn then sessionSignalConn:Disconnect(); sessionSignalConn = nil end
+                if sessionSignalConn then sessionSignalConn:Disconnect(); sessionSignalConn=nil end
             end
 
             startSessionWatch()
 
-            -- ═══════════════════════════════════════════════
-            --  MAIN STATE MACHINE
-            -- ═══════════════════════════════════════════════
             while getgenv().autoRaid do
-                getgenv().raidSt = st
-
-                -- Always wait for player to be alive
-                if not waitUntilAlive(cancelRaid, 20) then break end
+                getgenv().raidSt=st
+                if not waitUntilAlive(cancelRaid,20) then break end
                 if not getgenv().autoRaid then break end
 
-                -- ── RIFT INTERRUPT ──────────────────────────
+                -- Rift interrupt
                 if raidYieldCheck() then
-                    -- Leave any active session immediately
                     if getRaidSession() then
-                        pcall(function() R.RaidsL:FireServer("Leave") end)
-                        task.wait(0.1)
+                        pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.1)
                         pcall(function() R.RaidsL:FireServer("Leave") end)
                     end
                     cleanupCombat()
-                    getgenv().raidInP     = false
-                    State.raidActive      = false
-                    State.raidFinishing   = false
-                    if summonPaused and summonPauseReason == "raid" then
-                        summonPaused = false; summonPauseReason = nil
-                    end
-
-                    -- Wait for rift to fully clear
-                    waitRiftClear(cancelRaid, 300)
+                    getgenv().raidInP=false; State.raidActive=false; State.raidFinishing=false
+                    if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
+                    waitRiftClear(cancelRaid,300)
                     if not getgenv().autoRaid then break end
-
-                    -- Flush caches, re-evaluate stage
-                    lastStgUp = 0; lastHRPUp = 0; task.wait(0.3); lastStgUp = 0
-                    sessionCreated = false; createAttempts = 0
-                    State.raidInProgress = false
-
-                    if getStg() == sg() then
-                        if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
-                        cAtt = 0; setRaidSt("FIND_PAD")
-                    else
-                        setRaidSt("TELEPORT")
-                    end
-                    startSessionWatch()
-                    continue
+                    lastStgUp=0; lastHRPUp=0; task.wait(0.3); lastStgUp=0
+                    sessionCreated=false; createAttempts=0; State.raidInProgress=false
+                    if getStg()==sg() then
+                        if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
+                        cAtt=0; setRaidSt("FIND_PAD")
+                    else setRaidSt("TELEPORT") end
+                    startSessionWatch(); continue
                 end
 
-                -- ── IDLE ────────────────────────────────────
-                if st == "IDLE" then
-                    inCombat = false; getgenv().raidInP = false; raidMobCountAt = -1
-                    State.raidActive = false; State.raidFinishing = false; State.raidInProgress = false
-                    sessionCreated = false; createAttempts = 0
+                if st=="IDLE" then
+                    inCombat=false; getgenv().raidInP=false; raidMobCountAt=-1
+                    State.raidActive=false; State.raidFinishing=false; State.raidInProgress=false
+                    sessionCreated=false; createAttempts=0
                     forceSessionRefresh(); task.wait(0.04)
-
                     if getRaidSession() then
-                        -- Reconnect to existing session
-                        getgenv().raidInP = true
-                        summonPaused = true; summonPauseReason = "raid"
-                        local mobCnt = countRaidMobs(true)
-                        setRaidSt(mobCnt > 0 and "FIGHTING" or "POST_FIGHT")
+                        getgenv().raidInP=true; summonPaused=true; summonPauseReason="raid"
+                        local mobCnt=countRaidMobs(true)
+                        setRaidSt(mobCnt>0 and "FIGHTING" or "POST_FIGHT")
                     else
-                        pads = {}; pIdx = 1; cAtt = 0; lastStgUp = 0
-                        setRaidSt("TELEPORT")
+                        pads={}; pIdx=1; cAtt=0; lastStgUp=0; setRaidSt("TELEPORT")
                     end
 
-                -- ── TELEPORT ────────────────────────────────
-                elseif st == "TELEPORT" then
-                    if stateAge() > 60 then setRaidSt("IDLE"); continue end
-                    getgenv().raidInP = false; State.raidActive = false; State.raidInProgress = true
-                    sessionCreated = false
-
-                    local ok = preciseTpToStage(sg(), cancelRaid, 22)
+                elseif st=="TELEPORT" then
+                    if stateAge()>60 then setRaidSt("IDLE"); continue end
+                    getgenv().raidInP=false; State.raidActive=false; State.raidInProgress=true
+                    sessionCreated=false
+                    local ok=preciseTpToStage(sg(),cancelRaid,22)
                     if raidYieldCheck() then continue end
                     if ok then
-                        if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
-                        cAtt = 0; sessionCreated = false; createAttempts = 0
-                        setRaidSt("FIND_PAD")
-                    else
-                        task.wait(0.5); continue
+                        if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
+                        cAtt=0; sessionCreated=false; createAttempts=0; setRaidSt("FIND_PAD")
+                    else task.wait(0.5); continue end
+
+                elseif st=="FIND_PAD" then
+                    getgenv().raidInP=false; State.raidActive=false; State.raidInProgress=true
+                    sessionCreated=false
+                    if stateAge()>30 then
+                        lastStgUp=0
+                        setRaidSt(getStg()~=sg() and "TELEPORT" or "FIND_PAD")
+                        if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
+                        stateEnterTime=os.clock(); continue
                     end
-
-                -- ── FIND_PAD ────────────────────────────────
-                elseif st == "FIND_PAD" then
-                    getgenv().raidInP = false; State.raidActive = false; State.raidInProgress = true
-                    sessionCreated = false
-
-                    if stateAge() > 30 then
-                        lastStgUp = 0
-                        setRaidSt(getStg() ~= sg() and "TELEPORT" or "FIND_PAD")
-                        if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
-                        stateEnterTime = os.clock()
-                        continue
-                    end
-
-                    lastStgUp = 0
-                    if getStg() ~= sg() then setRaidSt("TELEPORT"); continue end
-
-                    local pad = nil
+                    lastStgUp=0
+                    if getStg()~=sg() then setRaidSt("TELEPORT"); continue end
+                    local pad=nil
                     if getgenv().isDD then
-                        pad = getDoubleDungeonPad()
-                        if not pad then task.wait(0.25); continue end
+                        pad=getDoubleDungeonPad(); if not pad then task.wait(0.25); continue end
                     else
-                        if #pads == 0 then pads = getLobbyPads(); pIdx = 1 end
-                        if #pads == 0 then task.wait(0.3); continue end
-                        for i = 1, #pads do
-                            local idx = ((pIdx - 1 + i - 1) % #pads) + 1
-                            local p   = pads[idx]
-                            if p and p.Parent and isPadAvailable(p) then
-                                pad = p; pIdx = idx; break
-                            end
+                        if #pads==0 then pads=getLobbyPads(); pIdx=1 end
+                        if #pads==0 then task.wait(0.3); continue end
+                        for i=1,#pads do
+                            local idx=((pIdx-1+i-1)%#pads)+1; local p=pads[idx]
+                            if p and p.Parent and isPadAvailable(p) then pad=p; pIdx=idx; break end
                         end
-                        if not pad then
-                            pads = getLobbyPads()
-                            pIdx = (pIdx % math.max(#pads, 1)) + 1
-                            task.wait(0.3); continue
-                        end
+                        if not pad then pads=getLobbyPads(); pIdx=(pIdx%math.max(#pads,1))+1; task.wait(0.3); continue end
                     end
-
-                    local snapOk = precisePadSnap(pad)
-                    if not snapOk then task.wait(0.15); continue end
+                    local snapOk=precisePadSnap(pad); if not snapOk then task.wait(0.15); continue end
                     task.wait(0.05)
                     if not getgenv().autoRaid or raidYieldCheck() then continue end
-                    cAtt = 0; sessionCreated = false; createAttempts = 0
-                    setRaidSt("CREATE")
+                    cAtt=0; sessionCreated=false; createAttempts=0; setRaidSt("CREATE")
 
-                -- ── CREATE ──────────────────────────────────
-                elseif st == "CREATE" then
-                    State.raidInProgress = true
-
-                    if stateAge() > 40 then
-                        createAttempts = 0; sessionCreated = false
-                        setRaidSt("TELEPORT"); continue
-                    end
-
+                elseif st=="CREATE" then
+                    State.raidInProgress=true
+                    if stateAge()>40 then createAttempts=0; sessionCreated=false; setRaidSt("TELEPORT"); continue end
                     forceSessionRefresh()
-                    if getRaidSession() then
-                        sessionCreated = true; createAttempts = 0
-                        task.wait(0.4); setRaidSt("WAIT_ENTER"); continue
+                    if getRaidSession() then sessionCreated=true; createAttempts=0; task.wait(0.4); setRaidSt("WAIT_ENTER"); continue end
+                    lastStgUp=0
+                    if getStg()~=sg() then setRaidSt("TELEPORT"); continue end
+                    local now0=os.clock()
+                    if now0-lastCreateTime>=0.30 then
+                        lastCreateTime=now0
+                        local mapName=getgenv().isDD and "Double Dungeons" or getgenv().selRaidMap
+                        R.Raids:FireServer(mapName,getgenv().selRaidDiff)
+                        createAttempts=createAttempts+1
                     end
-
-                    lastStgUp = 0
-                    if getStg() ~= sg() then setRaidSt("TELEPORT"); continue end
-
-                    local now0 = os.clock()
-                    if now0 - lastCreateTime >= 0.30 then
-                        lastCreateTime = now0
-                        local mapName = getgenv().isDD and "Double Dungeons" or getgenv().selRaidMap
-                        R.Raids:FireServer(mapName, getgenv().selRaidDiff)
-                        createAttempts = createAttempts + 1
-                    end
-
-                    -- Poll for session for up to 3 seconds
-                    local checkStart = os.clock()
-                    local foundSession = false
-                    while os.clock() - checkStart < 3.0 do
+                    local checkStart=os.clock(); local foundSession=false
+                    while os.clock()-checkStart<3.0 do
                         if raidYieldCheck() or cancelRaid() then break end
                         task.wait(0.08)
-                        if sessionCreated then forceSessionRefresh() end
                         forceSessionRefresh()
-                        if getRaidSession() then
-                            sessionCreated = true; foundSession = true; break
-                        end
+                        if getRaidSession() then sessionCreated=true; foundSession=true; break end
                     end
+                    if foundSession then createAttempts=0; task.wait(0.5); setRaidSt("WAIT_ENTER")
+                    elseif createAttempts>=12 then createAttempts=0; sessionCreated=false; setRaidSt("TELEPORT") end
 
-                    if foundSession then
-                        createAttempts = 0; task.wait(0.5); setRaidSt("WAIT_ENTER")
-                    elseif createAttempts >= 12 then
-                        createAttempts = 0; sessionCreated = false; setRaidSt("TELEPORT")
-                    end
-
-                -- ── WAIT_ENTER ──────────────────────────────
-                elseif st == "WAIT_ENTER" then
-                    State.raidActive = true; State.raidInProgress = true
-
-                    if stateAge() > 55 then
+                elseif st=="WAIT_ENTER" then
+                    State.raidActive=true; State.raidInProgress=true
+                    if stateAge()>55 then
                         forceSessionRefresh()
-                        if getRaidSession() then
-                            pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.3)
-                        end
-                        sessionCreated = false; fullReset(); continue
+                        if getRaidSession() then pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.3) end
+                        sessionCreated=false; fullReset(); continue
                     end
-
                     if raidYieldCheck() then
                         pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.1)
-                        getgenv().raidInP = false; sessionCreated = false
-                        if summonPaused and summonPauseReason == "raid" then
-                            summonPaused = false; summonPauseReason = nil
-                        end
+                        getgenv().raidInP=false; sessionCreated=false
+                        if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                         setRaidSt("IDLE"); continue
                     end
-
-                    getgenv().raidInP = true
-                    summonPaused = true; summonPauseReason = "raid"
-
+                    getgenv().raidInP=true; summonPaused=true; summonPauseReason="raid"
                     forceSessionRefresh()
                     if not getRaidSession() then
-                        getgenv().raidInP = false; State.raidActive = false
-                        sessionCreated = false
-                        if summonPaused and summonPauseReason == "raid" then
-                            summonPaused = false; summonPauseReason = nil
-                        end
+                        getgenv().raidInP=false; State.raidActive=false; sessionCreated=false
+                        if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                         setRaidSt("IDLE"); continue
                     end
-
-                    -- Wait for first mob to appear (up to 35 s)
-                    local mobWaitStart = os.clock()
-                    local mobFound     = false
-                    while os.clock() - mobWaitStart < 35 do
+                    local mobWaitStart=os.clock(); local mobFound=false
+                    while os.clock()-mobWaitStart<35 do
                         if not getgenv().autoRaid or raidYieldCheck() then break end
                         forceSessionRefresh()
                         if not getRaidSession() then break end
-                        lastTgtUp = 0
-                        if countRaidMobs(true) > 0 then mobFound = true; break end
+                        lastTgtUp=0
+                        if countRaidMobs(true)>0 then mobFound=true; break end
                         task.wait(0.15)
                     end
-
-                    if mobFound then
-                        setRaidSt("FIGHTING")
+                    if mobFound then setRaidSt("FIGHTING")
                     else
                         forceSessionRefresh()
                         if getRaidSession() then
-                            setRaidSt(countRaidMobs(true) > 0 and "FIGHTING" or "POST_FIGHT")
+                            setRaidSt(countRaidMobs(true)>0 and "FIGHTING" or "POST_FIGHT")
                         else
-                            getgenv().raidInP = false; State.raidActive = false
-                            sessionCreated = false
-                            if summonPaused and summonPauseReason == "raid" then
-                                summonPaused = false; summonPauseReason = nil
-                            end
+                            getgenv().raidInP=false; State.raidActive=false; sessionCreated=false
+                            if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                             setRaidSt("IDLE")
                         end
                     end
                     continue
 
-                -- ── FIGHTING ────────────────────────────────
-                elseif st == "FIGHTING" then
-                    State.raidActive = true; State.raidInProgress = true
-
-                    -- Safety timeout (5 min)
-                    if stateAge() > 300 then fullReset(); continue end
-
-                    getgenv().raidInP = true
-                    summonPaused = true; summonPauseReason = "raid"
+                elseif st=="FIGHTING" then
+                    State.raidActive=true; State.raidInProgress=true
+                    if stateAge()>300 then fullReset(); continue end
+                    getgenv().raidInP=true; summonPaused=true; summonPauseReason="raid"
                     if not inCombat then startRaidCombat() end
-
-                    local fDl = os.clock() + 300
-                    while os.clock() < fDl and getgenv().autoRaid do
+                    local fDl=os.clock()+300
+                    while os.clock()<fDl and getgenv().autoRaid do
                         if raidYieldCheck() then
                             cleanupCombat()
                             pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.1)
-                            getgenv().raidInP = false; State.raidActive = false
-                            sessionCreated = false
-                            if summonPaused and summonPauseReason == "raid" then
-                                summonPaused = false; summonPauseReason = nil
-                            end
+                            getgenv().raidInP=false; State.raidActive=false; sessionCreated=false
+                            if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                             setRaidSt("IDLE"); break
                         end
-
-                        -- Check if all mobs dead (triple-confirm)
-                        forceSessionRefresh(); raidMobCountAt = -1
-                        if countRaidMobs(true) == 0 then
-                            task.wait(0.4); forceSessionRefresh(); raidMobCountAt = -1
-                            if countRaidMobs(true) == 0 then
-                                task.wait(0.4); forceSessionRefresh(); raidMobCountAt = -1
-                                if countRaidMobs(true) == 0 then break end
+                        forceSessionRefresh(); raidMobCountAt=-1
+                        if countRaidMobs(true)==0 then
+                            task.wait(0.4); forceSessionRefresh(); raidMobCountAt=-1
+                            if countRaidMobs(true)==0 then
+                                task.wait(0.4); forceSessionRefresh(); raidMobCountAt=-1
+                                if countRaidMobs(true)==0 then break end
                             end
                         end
                         task.wait(0.02)
                     end
+                    if st=="FIGHTING" then cleanupCombat(); task.wait(0.05); forceSessionRefresh(); setRaidSt("POST_FIGHT") end
 
-                    if st == "FIGHTING" then
-                        cleanupCombat(); task.wait(0.05)
-                        forceSessionRefresh(); setRaidSt("POST_FIGHT")
-                    end
-
-                -- ── POST_FIGHT ───────────────────────────────
-                elseif st == "POST_FIGHT" then
-                    State.raidFinishing = true; State.raidInProgress = true
-
-                    if stateAge() > 35 then fullReset(); continue end
+                -- ── POST_FIGHT: เก็บกล่อง แล้วออก ────────────
+                elseif st=="POST_FIGHT" then
+                    State.raidFinishing=true; State.raidInProgress=true
+                    if stateAge()>45 then fullReset(); continue end
                     if raidYieldCheck() then fullReset(); continue end
+                    forceSessionRefresh(); raidMobCountAt=-1
+                    if countRaidMobs(true)>0 then setRaidSt("FIGHTING"); continue end
 
-                    forceSessionRefresh(); raidMobCountAt = -1
-                    if countRaidMobs(true) > 0 then setRaidSt("FIGHTING"); continue end
+                    inCombat=false; getgenv().raidInP=true
 
-                    inCombat = false; getgenv().raidInP = true
+                    -- FIX: เก็บกล่องที่นี่ก่อน
+                    print("[Auto Raid] RAID CLEAR — collecting chests...")
                     collectBoxes()
+                    print("[Auto Raid] Chests done — exiting raid...")
+
                     if not getgenv().autoRaid then break end
                     if raidYieldCheck() then fullReset(); continue end
 
-                    forceSessionRefresh(); raidMobCountAt = -1
-                    if countRaidMobs(true) > 0 then setRaidSt("FIGHTING"); continue end
+                    -- ตรวจ mob อีกครั้ง (กรณี wave ใหม่ pop ระหว่างเก็บกล่อง)
+                    forceSessionRefresh(); raidMobCountAt=-1
+                    if countRaidMobs(true)>0 then setRaidSt("FIGHTING"); continue end
 
                     exitRaid()
                     if raidYieldCheck() then fullReset(); continue end
 
-                    -- Ensure session is gone
-                    local sessWaitDl = os.clock() + 10
-                    while os.clock() < sessWaitDl do
+                    -- รอให้ session หาย
+                    local sessWaitDl=os.clock()+10
+                    while os.clock()<sessWaitDl do
                         if raidYieldCheck() then break end
                         forceSessionRefresh()
                         if not getRaidSession() then break end
-                        pcall(function() R.RaidsL:FireServer("Leave") end)
-                        task.wait(0.25)
+                        pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.25)
                     end
                     if getRaidSession() then
-                        pcall(function() R.RaidsL:FireServer("Leave") end)
-                        task.wait(0.4); forceSessionRefresh()
+                        pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.4); forceSessionRefresh()
                     end
 
-                    task.wait(0.8); lastStgUp = 0
-                    getgenv().raidInP  = false
-                    State.raidActive   = false
-                    sessionCreated     = false
-                    if summonPaused and summonPauseReason == "raid" then
-                        summonPaused = false; summonPauseReason = nil
-                    end
-                    cAtt = 0
-                    setRaidSt("WAIT_EXIT")
+                    task.wait(0.8); lastStgUp=0
+                    getgenv().raidInP=false; State.raidActive=false; sessionCreated=false
+                    if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
+                    cAtt=0; setRaidSt("WAIT_EXIT")
 
-                -- ── WAIT_EXIT ────────────────────────────────
-                elseif st == "WAIT_EXIT" then
-                    State.raidFinishing = true; State.raidInProgress = true
-
-                    if stateAge() > 40 then
-                        State.raidFinishing  = false
-                        State.raidInProgress = false
-                        setRaidSt("IDLE"); continue
+                elseif st=="WAIT_EXIT" then
+                    State.raidFinishing=true; State.raidInProgress=true
+                    if stateAge()>40 then
+                        State.raidFinishing=false; State.raidInProgress=false; setRaidSt("IDLE"); continue
                     end
                     if raidYieldCheck() then
-                        State.raidFinishing  = false
-                        State.raidInProgress = false
-                        setRaidSt("IDLE"); continue
+                        State.raidFinishing=false; State.raidInProgress=false; setRaidSt("IDLE"); continue
                     end
-
-                    inCombat = false
-                    local targetStage = sg()
-
+                    inCombat=false
+                    local targetStage=sg()
                     if isHomeStageReady(targetStage) then
-                        task.wait(0.4); lastStgUp = 0
+                        task.wait(0.4); lastStgUp=0
                         if isHomeStageReady(targetStage) then
-                            State.raidFinishing  = false
-                            State.raidInProgress = false
-                            if summonPaused and summonPauseReason == "raid" then
-                                summonPaused = false; summonPauseReason = nil
-                            end
+                            State.raidFinishing=false; State.raidInProgress=false
+                            if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                             forceSessionRefresh(); task.wait(0.08)
-                            if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
-                            cAtt = 0; setRaidSt("FIND_PAD")
-                            continue
+                            if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
+                            cAtt=0; setRaidSt("FIND_PAD"); continue
                         end
                     end
-
-                    local tpOk = preciseTpToStage(targetStage, cancelRaid, 25)
+                    local tpOk=preciseTpToStage(targetStage,cancelRaid,25)
                     if not getgenv().autoRaid then break end
-                    if raidYieldCheck() then
-                        State.raidFinishing  = false
-                        State.raidInProgress = false
-                        fullReset(); continue
-                    end
-
+                    if raidYieldCheck() then State.raidFinishing=false; State.raidInProgress=false; fullReset(); continue end
                     if tpOk then
-                        task.wait(0.5); lastStgUp = 0
+                        task.wait(0.5); lastStgUp=0
                         if isHomeStageReady(targetStage) then
-                            State.raidFinishing  = false
-                            State.raidInProgress = false
-                            if summonPaused and summonPauseReason == "raid" then
-                                summonPaused = false; summonPauseReason = nil
-                            end
+                            State.raidFinishing=false; State.raidInProgress=false
+                            if summonPaused and summonPauseReason=="raid" then summonPaused=false; summonPauseReason=nil end
                             forceSessionRefresh(); task.wait(0.08)
-                            if not getgenv().isDD then pads = getLobbyPads(); pIdx = 1 end
-                            cAtt = 0; setRaidSt("FIND_PAD")
-                        else
-                            setRaidSt("IDLE")
-                        end
-                    else
-                        setRaidSt("IDLE")
-                    end
+                            if not getgenv().isDD then pads=getLobbyPads(); pIdx=1 end
+                            cAtt=0; setRaidSt("FIND_PAD")
+                        else setRaidSt("IDLE") end
+                    else setRaidSt("IDLE") end
                     continue
                 end
 
                 RunService.Heartbeat:Wait()
-            end -- while loop
+            end
 
-            stopSessionWatch()
-            fullReset()
-            State.raidActive     = false
-            State.raidFinishing  = false
-            State.raidInProgress = false
-        end) -- task.spawn
-    end -- Callback
-}) -- Toggle
-end -- close do block (raid system)
+            stopSessionWatch(); fullReset()
+            State.raidActive=false; State.raidFinishing=false; State.raidInProgress=false
+        end)
+    end
+})
+end -- raid do block
 
 -- ============================================================
--- AUTO RIFT  (Priority: HIGHEST — interrupts everything)
+-- AUTO RIFT
 -- ============================================================
 Tabs.Gen:Section({Title="Auto Rift"})
 
-local RIFT_SESS_PREFIX = "Reaper Society_Rift_"
+local RIFT_SESS_PREFIX="Reaper Society_Rift_"
 
 local function findRiftVisualSession()
     if not RaidsVisual then return nil end
-    for _, f in next, RaidsVisual:GetChildren() do
-        if f.Name:sub(1, #RIFT_SESS_PREFIX) == RIFT_SESS_PREFIX then return f end
+    for _,f in next,RaidsVisual:GetChildren() do
+        if f.Name:sub(1,#RIFT_SESS_PREFIX)==RIFT_SESS_PREFIX then return f end
     end
     return nil
 end
 
 local function getRiftEnemiesValue()
-    local sf = findRiftVisualSession(); if not sf then return nil end
-    local configs  = sf:FindFirstChild("Configs")
-    local others   = configs and configs:FindFirstChild("Others")
-    local enemies  = others  and others:FindFirstChild("Enemies")
+    local sf=findRiftVisualSession(); if not sf then return nil end
+    local configs=sf:FindFirstChild("Configs"); local others=configs and configs:FindFirstChild("Others")
+    local enemies=others and others:FindFirstChild("Enemies")
     if enemies then return enemies.Value end
     return nil
 end
 
 local function getRiftTravelData()
-    local sf = findRiftVisualSession(); if not sf then return nil, nil, nil end
-    local configs = sf:FindFirstChild("Configs")
-    local others  = configs and configs:FindFirstChild("Others")
-    local portal  = others  and others:FindFirstChild("Portal")
-    local travel  = portal  and portal:FindFirstChild("Travel")
-    if not travel then return nil, nil, sf end
-
-    local pp = travel:FindFirstChildOfClass("ProximityPrompt")
-    if not pp then
-        for _, v in next, travel:GetDescendants() do
-            if v:IsA("ProximityPrompt") then pp = v; break end
-        end
-    end
-
-    local part = nil
-    if travel:IsA("BasePart") then
-        part = travel
-    elseif travel:IsA("Model") then
-        part = travel.PrimaryPart or travel:FindFirstChildWhichIsA("BasePart", true)
-    else
-        part = travel:FindFirstChildWhichIsA("BasePart", true)
-    end
-
-    return pp, part, sf
+    local sf=findRiftVisualSession(); if not sf then return nil,nil,nil end
+    local configs=sf:FindFirstChild("Configs"); local others=configs and configs:FindFirstChild("Others")
+    local portal=others and others:FindFirstChild("Portal"); local travel=portal and portal:FindFirstChild("Travel")
+    if not travel then return nil,nil,sf end
+    local pp=travel:FindFirstChildOfClass("ProximityPrompt")
+    if not pp then for _,v in next,travel:GetDescendants() do if v:IsA("ProximityPrompt") then pp=v; break end end end
+    local part=nil
+    if travel:IsA("BasePart") then part=travel
+    elseif travel:IsA("Model") then part=travel.PrimaryPart or travel:FindFirstChildWhichIsA("BasePart",true)
+    else part=travel:FindFirstChildWhichIsA("BasePart",true) end
+    return pp,part,sf
 end
 
 local function isRiftAllClear()
-    local ec = getRiftEnemiesValue()
-    if ec ~= nil and ec <= 0 then return true end
-    local pp = getRiftTravelData()
-    if pp and pp.Enabled == true then return true end
+    local ec=getRiftEnemiesValue()
+    if ec~=nil and ec<=0 then return true end
+    local pp=getRiftTravelData()
+    if pp and pp.Enabled==true then return true end
     return false
 end
 
 local function getSpawnedRifts()
     if SpawnedRiftsFolder and SpawnedRiftsFolder.Parent then return SpawnedRiftsFolder end
-    SpawnedRiftsFolder = Workspace:FindFirstChild("SpawnedRifts")
+    SpawnedRiftsFolder=Workspace:FindFirstChild("SpawnedRifts")
     return SpawnedRiftsFolder
 end
 
 local function findRiftModelNow()
-    local sr = getSpawnedRifts(); if not sr then return nil end
-    local m = sr:FindFirstChild("RiftModel")
+    local sr=getSpawnedRifts(); if not sr then return nil end
+    local m=sr:FindFirstChild("RiftModel")
     return (m and m.Parent) and m or nil
 end
 
@@ -2720,41 +2458,33 @@ local function getRiftModelPart(model)
     if not model or not model.Parent then return nil end
     if model:IsA("BasePart") then return model end
     if model.PrimaryPart and model.PrimaryPart.Parent then return model.PrimaryPart end
-    local hrp = model:FindFirstChild("HumanoidRootPart")
+    local hrp=model:FindFirstChild("HumanoidRootPart")
     if hrp and hrp.Parent then return hrp end
-    return model:FindFirstChildWhichIsA("BasePart", true)
+    return model:FindFirstChildWhichIsA("BasePart",true)
 end
 
 local function findRiftProxPrompt(model)
     if not model or not model.Parent then return nil end
-    local pp = model:FindFirstChildOfClass("ProximityPrompt")
-    if pp then return pp end
-    local sub = model:FindFirstChild("Model")
+    local pp=model:FindFirstChildOfClass("ProximityPrompt"); if pp then return pp end
+    local sub=model:FindFirstChild("Model")
     if sub then
-        pp = sub:FindFirstChildOfClass("ProximityPrompt")
-        if pp then return pp end
-        for _, v in next, sub:GetDescendants() do
-            if v:IsA("ProximityPrompt") then return v end
-        end
+        pp=sub:FindFirstChildOfClass("ProximityPrompt"); if pp then return pp end
+        for _,v in next,sub:GetDescendants() do if v:IsA("ProximityPrompt") then return v end end
     end
-    for _, v in next, model:GetDescendants() do
-        if v:IsA("ProximityPrompt") then return v end
-    end
+    for _,v in next,model:GetDescendants() do if v:IsA("ProximityPrompt") then return v end end
     return nil
 end
 
-local function waitRiftModelGone(model, timeout, cancelFn)
+local function waitRiftModelGone(model,timeout,cancelFn)
     if not model or not model.Parent then return true end
-    local gone = false; local conn = nil
+    local gone=false; local conn=nil
     pcall(function()
-        conn = model.AncestryChanged:Connect(function(_, newParent)
-            if not newParent then gone = true end
-        end)
+        conn=model.AncestryChanged:Connect(function(_,newParent) if not newParent then gone=true end end)
     end)
-    local dl = os.clock() + (timeout or 120)
-    while not gone and os.clock() < dl do
+    local dl=os.clock()+(timeout or 120)
+    while not gone and os.clock()<dl do
         if cancelFn and cancelFn() then break end
-        if not model.Parent then gone = true; break end
+        if not model.Parent then gone=true; break end
         task.wait(0.04)
     end
     if conn then pcall(function() conn:Disconnect() end) end
@@ -2762,102 +2492,84 @@ local function waitRiftModelGone(model, timeout, cancelFn)
 end
 
 local function isRiftMobValid(mob)
-    return mob and mob.Parent and isMobAlive(mob) and mob.Name:sub(1,5) == "Rifts"
+    return mob and mob.Parent and isMobAlive(mob) and mob.Name:sub(1,5)=="Rifts"
 end
 
 local function getRiftMobPart(m)
     if not m or not m.Parent then return nil end
-    local pp = m.PrimaryPart
-    if pp and pp.Parent then return pp end
-    local hrp = m:FindFirstChild("HumanoidRootPart")
-    if hrp and hrp.Parent then return hrp end
-    for _, v in next, m:GetDescendants() do
-        if v:IsA("BasePart") and v.Parent then return v end
-    end
+    local pp=m.PrimaryPart; if pp and pp.Parent then return pp end
+    local hrp=m:FindFirstChild("HumanoidRootPart"); if hrp and hrp.Parent then return hrp end
+    for _,v in next,m:GetDescendants() do if v:IsA("BasePart") and v.Parent then return v end end
     return nil
 end
 
 local function findNearestRiftMob()
-    lastTgtUp = 0
-    local all = ServerTargets:GetChildren()
-    cachedTargets = all
-    local hrp = getHRP(); if not hrp then return nil, nil end
-    local hPos = hrp.Position
-    local best, bestPt, bestSq = nil, nil, math.huge
-    for _, m in next, all do
+    lastTgtUp=0; local all=ServerTargets:GetChildren(); cachedTargets=all
+    local hrp=getHRP(); if not hrp then return nil,nil end
+    local hPos=hrp.Position; local best,bestPt,bestSq=nil,nil,math.huge
+    for _,m in next,all do
         if isRiftMobValid(m) then
-            local pt = getRiftMobPart(m)
+            local pt=getRiftMobPart(m)
             if pt then
-                local d = hPos - pt.Position
-                local dsq = d.X*d.X + d.Y*d.Y + d.Z*d.Z
-                if dsq < bestSq then bestSq = dsq; best = m; bestPt = pt end
+                local d=hPos-pt.Position; local dsq=d.X*d.X+d.Y*d.Y+d.Z*d.Z
+                if dsq<bestSq then bestSq=dsq; best=m; bestPt=pt end
             end
         end
     end
-    return best, bestPt
+    return best,bestPt
 end
 
 local function riftHasLiveMobs()
-    local ec = getRiftEnemiesValue()
-    if ec ~= nil then return ec > 0 end
-    lastTgtUp = 0
-    for _, m in next, ServerTargets:GetChildren() do
-        if isRiftMobValid(m) then return true end
-    end
+    local ec=getRiftEnemiesValue(); if ec~=nil then return ec>0 end
+    lastTgtUp=0
+    for _,m in next,ServerTargets:GetChildren() do if isRiftMobValid(m) then return true end end
     return false
 end
 
 local function flushAllCaches()
-    lastTgtUp = 0; lastHRPUp = 0; lastPartUp = 0
-    for k in next, mobHumCache     do mobHumCache[k]    = nil end
-    for k in next, mobNameCache    do mobNameCache[k]   = nil end
-    for k in next, mobDisplayCache do mobDisplayCache[k]= nil end
+    lastTgtUp=0; lastHRPUp=0; lastPartUp=0
+    for k in next,mobHumCache     do mobHumCache[k]=nil end
+    for k in next,mobNameCache    do mobNameCache[k]=nil end
+    for k in next,mobDisplayCache do mobDisplayCache[k]=nil end
 end
 
-local REAPER_STAGE  = "Reaper Society"
-local REAPER_BUF    = teleportBuffers["Reaper Society"]
-local RIFT_SNAP_SQ  = 100
+local REAPER_STAGE="Reaper Society"
+local REAPER_BUF=teleportBuffers["Reaper Society"]
+local RIFT_SNAP_SQ=100
 
 local function tpToReaper(cancelFn)
-    if getStg() == REAPER_STAGE then
-        local char = lp.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        if hrp and hum and hum.Health > 0 and hrp.Position.Y > -50 then return true end
+    if getStg()==REAPER_STAGE then
+        local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health>0 and hrp.Position.Y>-50 then return true end
     end
-    local dl = os.clock() + 15
-    local lastSend = -99
-    while os.clock() < dl do
+    local dl=os.clock()+15; local lastSend=-99
+    while os.clock()<dl do
         if cancelFn and cancelFn() then return false end
-        local now = os.clock()
-        if now - lastSend >= 0.5 then
-            R.Byte:FireServer(REAPER_BUF); lastStgUp = 0; lastSend = now
-        end
+        local now=os.clock()
+        if now-lastSend>=0.5 then R.Byte:FireServer(REAPER_BUF); lastStgUp=0; lastSend=now end
         task.wait(0.05)
-        if getStg() == REAPER_STAGE then
-            local char = lp.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            local hum  = char and char:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hum.Health > 0 and hrp.Position.Y > -50 then return true end
+        if getStg()==REAPER_STAGE then
+            local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+            local hum=char and char:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health>0 and hrp.Position.Y>-50 then return true end
         end
     end
-    return getStg() == REAPER_STAGE
+    return getStg()==REAPER_STAGE
 end
 
 local function exitRiftViaTravel(cancelFn)
-    local exitDl = os.clock() + 45
-    while os.clock() < exitDl do
+    local exitDl=os.clock()+45
+    while os.clock()<exitDl do
         if cancelFn and cancelFn() then break end
-        local pp, tPart, sf = getRiftTravelData()
+        local pp,tPart,sf=getRiftTravelData()
         if not sf or not sf.Parent then break end
         if not pp or not tPart then task.wait(0.1); continue end
-        local hrp = getHRP()
+        local hrp=getHRP()
         if hrp and tPart and tPart.Parent then
-            local dv = hrp.Position - tPart.Position
-            if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 400 then
-                killVelocity(hrp)
-                hrp.CFrame = CFrame.new(tPart.Position + Vector3.new(0, 1, 0))
-                task.wait(0.04)
+            local dv=hrp.Position-tPart.Position
+            if dv.X*dv.X+dv.Y*dv.Y+dv.Z*dv.Z>400 then
+                killVelocity(hrp); hrp.CFrame=CFrame.new(tPart.Position+Vector3.new(0,1,0)); task.wait(0.04)
             end
         end
         if pp and pp.Parent and pp.Enabled then
@@ -2866,112 +2578,84 @@ local function exitRiftViaTravel(cancelFn)
         end
         task.wait(0.04)
     end
-    local waitDl = os.clock() + 15
-    while os.clock() < waitDl do
+    local waitDl=os.clock()+15
+    while os.clock()<waitDl do
         if cancelFn and cancelFn() then break end
         if not findRiftVisualSession() then break end
         task.wait(0.1)
     end
 end
 
-local riftDetectedSignal = false
-local riftDetectedModel  = nil
+local riftDetectedSignal=false
+local riftDetectedModel=nil
 
 Tabs.Gen:Toggle({
     Title="Auto Rift", Flag="AutoRift", Value=false,
     Callback=function(state)
-        getgenv().autoRift = state; autoRiftRun = state
+        getgenv().autoRift=state; autoRiftRun=state
         if not state then
-            getgenv().doRift = false
-            State.riftActive   = false
-            State.riftDetected = false
-            State.riftSettling = false
-            riftDetectedSignal = false
-            riftDetectedModel  = nil
-            if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
-            if summonPaused and summonPauseReason == "rift" then
-                summonPaused = false; summonPauseReason = nil
-            end
+            getgenv().doRift=false
+            State.riftActive=false; State.riftDetected=false; State.riftSettling=false
+            riftDetectedSignal=false; riftDetectedModel=nil
+            if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift=nil end
+            if summonPaused and summonPauseReason=="rift" then summonPaused=false; summonPauseReason=nil end
             return
         end
 
         task.spawn(function()
-            local function cancelFn()
-                return not autoRiftRun or not getgenv().autoRift
-            end
-
+            local function cancelFn() return not autoRiftRun or not getgenv().autoRift end
             local function riftCleanup()
-                if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
-                getgenv().doRift       = false
-                getgenv().riftSettling = false
-                State.riftActive       = false
-                State.riftSettling     = false
-                riftDetectedSignal     = false
-                riftDetectedModel      = nil
-                if summonPaused and summonPauseReason == "rift" then
-                    summonPaused = false; summonPauseReason = nil
-                end
+                if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift=nil end
+                getgenv().doRift=false; getgenv().riftSettling=false
+                State.riftActive=false; State.riftSettling=false
+                riftDetectedSignal=false; riftDetectedModel=nil
+                if summonPaused and summonPauseReason=="rift" then summonPaused=false; summonPauseReason=nil end
             end
 
-            local detectedModel = nil
-            local watchConns    = {}
-
+            local detectedModel=nil; local watchConns={}
             local function disconnectWatchers()
-                for _, c in ipairs(watchConns) do pcall(function() c:Disconnect() end) end
-                watchConns = {}; detectedModel = nil
+                for _,c in ipairs(watchConns) do pcall(function() c:Disconnect() end) end
+                watchConns={}; detectedModel=nil
             end
-
             local function hookSpawnedRifts(srFolder)
                 if not srFolder then return end
-                local ex = srFolder:FindFirstChild("RiftModel")
-                if ex and ex.Parent then detectedModel = ex; return end
-                local c = srFolder.ChildAdded:Connect(function(child)
-                    if child.Name == "RiftModel" and child.Parent then
-                        detectedModel = child
-                        riftDetectedSignal = true
-                        riftDetectedModel  = child
+                local ex=srFolder:FindFirstChild("RiftModel")
+                if ex and ex.Parent then detectedModel=ex; return end
+                local c=srFolder.ChildAdded:Connect(function(child)
+                    if child.Name=="RiftModel" and child.Parent then
+                        detectedModel=child; riftDetectedSignal=true; riftDetectedModel=child
                     end
                 end)
-                table.insert(watchConns, c)
-                local ex2 = srFolder:FindFirstChild("RiftModel")
-                if ex2 and ex2.Parent then
-                    detectedModel = ex2
-                    riftDetectedSignal = true
-                    riftDetectedModel  = ex2
-                end
+                table.insert(watchConns,c)
+                local ex2=srFolder:FindFirstChild("RiftModel")
+                if ex2 and ex2.Parent then detectedModel=ex2; riftDetectedSignal=true; riftDetectedModel=ex2 end
             end
-
             local function setupWatchers()
                 disconnectWatchers()
-                local sr = getSpawnedRifts()
-                if sr then
-                    hookSpawnedRifts(sr)
+                local sr=getSpawnedRifts()
+                if sr then hookSpawnedRifts(sr)
                 else
-                    local wc = Workspace.ChildAdded:Connect(function(child)
-                        if child.Name == "SpawnedRifts" then
-                            SpawnedRiftsFolder = child
-                            for i, cc in ipairs(watchConns) do
-                                if cc == wc then
-                                    pcall(function() cc:Disconnect() end)
-                                    table.remove(watchConns, i); break
-                                end
+                    local wc=Workspace.ChildAdded:Connect(function(child)
+                        if child.Name=="SpawnedRifts" then
+                            SpawnedRiftsFolder=child
+                            for i,cc in ipairs(watchConns) do
+                                if cc==wc then pcall(function() cc:Disconnect() end); table.remove(watchConns,i); break end
                             end
                             hookSpawnedRifts(child)
                         end
                     end)
-                    table.insert(watchConns, wc)
+                    table.insert(watchConns,wc)
                 end
             end
-
             local function pollForRiftModel()
                 if detectedModel and detectedModel.Parent then return detectedModel end
-                local m = findRiftModelNow()
-                if m then detectedModel = m; riftDetectedModel = m; return m end
-                local sr = getSpawnedRifts()
-                if sr and #watchConns == 0 then
+                local m=findRiftModelNow()
+                if m then detectedModel=m; riftDetectedModel=m; return m end
+                local sr=getSpawnedRifts()
+                if sr and #watchConns==0 then
                     hookSpawnedRifts(sr)
-                    m = sr:FindFirstChild("RiftModel")
-                    if m and m.Parent then detectedModel = m; riftDetectedModel = m; return m end
+                    m=sr:FindFirstChild("RiftModel")
+                    if m and m.Parent then detectedModel=m; riftDetectedModel=m; return m end
                 end
                 return nil
             end
@@ -2980,347 +2664,231 @@ Tabs.Gen:Toggle({
 
             while autoRiftRun do
                 if cancelFn() then break end
-                if not waitUntilAlive(cancelFn, 20) then break end
+                if not waitUntilAlive(cancelFn,20) then break end
                 if cancelFn() then break end
-
-                local riftModel = pollForRiftModel()
-                if not riftModel then
-                    task.wait(0.05); continue
-                end
-
-                detectedModel      = nil
-                riftDetectedSignal = false
-                riftDetectedModel  = nil
-
-                getgenv().doRift   = true
-                State.riftActive   = true
-                State.riftDetected = true
-                summonPaused       = true
-                summonPauseReason  = "rift"
-
-                -- Force-leave any active raid immediately
+                local riftModel=pollForRiftModel()
+                if not riftModel then task.wait(0.05); continue end
+                detectedModel=nil; riftDetectedSignal=false; riftDetectedModel=nil
+                getgenv().doRift=true; State.riftActive=true; State.riftDetected=true
+                summonPaused=true; summonPauseReason="rift"
                 if getgenv().raidInP or getRaidSession() then
+                    pcall(function() R.RaidsL:FireServer("Leave") end); task.wait(0.08)
                     pcall(function() R.RaidsL:FireServer("Leave") end)
-                    task.wait(0.08)
-                    pcall(function() R.RaidsL:FireServer("Leave") end)
-                    local rWait = os.clock() + 2.5
-                    while getgenv().raidInP and os.clock() < rWait do task.wait(0.06) end
-                    getgenv().raidInP = false
+                    local rWait=os.clock()+2.5
+                    while getgenv().raidInP and os.clock()<rWait do task.wait(0.06) end
+                    getgenv().raidInP=false
                 end
-
                 tpToReaper(cancelFn)
                 if cancelFn() then riftCleanup(); setupWatchers(); continue end
                 if not riftModel.Parent then riftCleanup(); setupWatchers(); continue end
-
-                local promptActive = true
-                local promptConn   = nil
-                promptConn = RunService.Heartbeat:Connect(function()
+                local promptActive=true; local promptConn=nil
+                promptConn=RunService.Heartbeat:Connect(function()
                     if not promptActive then return end
-                    if not riftModel or not riftModel.Parent then
-                        promptActive = false; return
-                    end
-                    local rPart  = getRiftModelPart(riftModel)
-                    local prompt = findRiftProxPrompt(riftModel)
-                    local hrp    = getHRP()
+                    if not riftModel or not riftModel.Parent then promptActive=false; return end
+                    local rPart=getRiftModelPart(riftModel); local prompt=findRiftProxPrompt(riftModel)
+                    local hrp=getHRP()
                     if hrp and rPart and rPart.Parent then
-                        local dv = hrp.Position - rPart.Position
-                        if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > RIFT_SNAP_SQ then
-                            killVelocity(hrp); hrp.CFrame = CFrame.new(rPart.Position)
+                        local dv=hrp.Position-rPart.Position
+                        if dv.X*dv.X+dv.Y*dv.Y+dv.Z*dv.Z>RIFT_SNAP_SQ then
+                            killVelocity(hrp); hrp.CFrame=CFrame.new(rPart.Position)
                         end
                     end
-                    if prompt and prompt.Parent then
-                        pcall(function() fireproximityprompt(prompt) end)
-                    end
+                    if prompt and prompt.Parent then pcall(function() fireproximityprompt(prompt) end) end
                 end)
-
-                waitRiftModelGone(riftModel, 120, cancelFn)
-                promptActive = false
-                if promptConn then pcall(function() promptConn:Disconnect() end); promptConn = nil end
-
+                waitRiftModelGone(riftModel,120,cancelFn)
+                promptActive=false
+                if promptConn then pcall(function() promptConn:Disconnect() end); promptConn=nil end
                 if cancelFn() then riftCleanup(); setupWatchers(); continue end
-
                 flushAllCaches(); task.wait(0.1)
-
-                local mobWaitDl = os.clock() + 25
-                while os.clock() < mobWaitDl and autoRiftRun do
+                local mobWaitDl=os.clock()+25
+                while os.clock()<mobWaitDl and autoRiftRun do
                     if cancelFn() then break end
                     flushAllCaches()
                     if riftHasLiveMobs() then break end
                     task.wait(0.04)
                 end
-
                 if cancelFn() then riftCleanup(); setupWatchers(); continue end
                 if not riftHasLiveMobs() and not findRiftVisualSession() then
                     riftCleanup(); setupWatchers(); task.wait(0.5); continue
                 end
-
-                local initMob, initPart = findNearestRiftMob()
+                local initMob,initPart=findNearestRiftMob()
                 if initPart then
-                    local hrpNow = getHRP()
-                    if hrpNow then
-                        killVelocity(hrpNow); hrpNow.CFrame = CFrame.new(initPart.Position)
-                        task.wait(0.03)
-                    end
+                    local hrpNow=getHRP()
+                    if hrpNow then killVelocity(hrpNow); hrpNow.CFrame=CFrame.new(initPart.Position); task.wait(0.03) end
                 end
                 sendAtk(); sendClk()
-                if initMob then pcall(function() R.Req:FireServer(initMob.Name, "Mouse") end) end
-
-                local cRiftMob  = initMob
-                local cRiftPart = initPart
-                local _reqLast  = 0
-                local _scanTick = 0
-                local _stuckCnt = 0
-
+                if initMob then pcall(function() R.Req:FireServer(initMob.Name,"Mouse") end) end
+                local cRiftMob=initMob; local cRiftPart=initPart
+                local _reqLast=0; local _scanTick2=0; local _stuckCnt=0
                 if Conns.rift then pcall(function() Conns.rift:Disconnect() end) end
-                Conns.rift = RunService.Heartbeat:Connect(function()
+                Conns.rift=RunService.Heartbeat:Connect(function()
                     if not autoRiftRun or not getgenv().autoRift then return end
-                    local now = os.clock()
-
-                    local hrp = getHRP(); if not hrp then return end
-                    local hum = hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
-                    if not hum or hum.Health <= 0 then cRiftMob=nil; cRiftPart=nil; return end
-
+                    local now=os.clock()
+                    local hrp=getHRP(); if not hrp then return end
+                    local hum=hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
+                    if not hum or hum.Health<=0 then cRiftMob=nil; cRiftPart=nil; return end
                     sendAtk(); sendClk()
-
                     if cRiftMob then
-                        if not cRiftMob.Parent or not isRiftMobValid(cRiftMob) then
-                            cRiftMob = nil; cRiftPart = nil
-                        else
-                            local newPt = getRiftMobPart(cRiftMob)
-                            if newPt and newPt.Parent then cRiftPart = newPt end
-                        end
+                        if not cRiftMob.Parent or not isRiftMobValid(cRiftMob) then cRiftMob=nil; cRiftPart=nil
+                        else local newPt=getRiftMobPart(cRiftMob); if newPt and newPt.Parent then cRiftPart=newPt end end
                     end
-
-                    _scanTick = _scanTick + 1
-                    if not cRiftMob and _scanTick % 2 == 0 then
-                        cRiftMob, cRiftPart = findNearestRiftMob()
-                    end
-
+                    _scanTick2=_scanTick2+1
+                    if not cRiftMob and _scanTick2%2==0 then cRiftMob,cRiftPart=findNearestRiftMob() end
                     if not cRiftMob then
-                        _stuckCnt = _stuckCnt + 1
-                        if _stuckCnt >= 60 then
-                            _stuckCnt = 0; flushAllCaches()
-                            cRiftMob, cRiftPart = findNearestRiftMob()
-                        end
+                        _stuckCnt=_stuckCnt+1
+                        if _stuckCnt>=60 then _stuckCnt=0; flushAllCaches(); cRiftMob,cRiftPart=findNearestRiftMob() end
                         return
                     end
-                    _stuckCnt = 0
-
-                    if not cRiftPart then
-                        cRiftPart = getRiftMobPart(cRiftMob)
-                        if not cRiftPart then cRiftMob = nil; return end
+                    _stuckCnt=0
+                    if not cRiftPart then cRiftPart=getRiftMobPart(cRiftMob); if not cRiftPart then cRiftMob=nil; return end end
+                    local dv=hrp.Position-cRiftPart.Position
+                    if dv.X*dv.X+dv.Y*dv.Y+dv.Z*dv.Z>400 then
+                        killVelocity(hrp); hrp.CFrame=CFrame.new(cRiftPart.Position)
                     end
-
-                    local dv = hrp.Position - cRiftPart.Position
-                    if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 400 then
-                        killVelocity(hrp); hrp.CFrame = CFrame.new(cRiftPart.Position)
-                    end
-
-                    if not dpsActive and now - _reqLast >= 0.025 then
-                        _reqLast = now
-                        R.Req:FireServer(cRiftMob.Name, "Mouse")
-                        pendingRequests[cRiftMob] = now
+                    if not dpsActive and now-_reqLast>=0.025 then
+                        _reqLast=now; R.Req:FireServer(cRiftMob.Name,"Mouse"); pendingRequests[cRiftMob]=now
                     end
                 end)
-
-                local CLEAR_CONFIRM = 10
-                local noMobTick     = 0
-                local _lastFlush    = 0
-                local safetyDl      = os.clock() + 1800
-
-                while autoRiftRun and os.clock() < safetyDl do
+                local CLEAR_CONFIRM=10; local noMobTick=0; local _lastFlush=0; local safetyDl=os.clock()+1800
+                while autoRiftRun and os.clock()<safetyDl do
                     task.wait(0.1)
-                    local now2 = os.clock()
-                    if now2 - _lastFlush >= 2.0 then
-                        _lastFlush = now2; flushAllCaches()
-                    end
-
-                    local clear = isRiftAllClear()
+                    local now2=os.clock()
+                    if now2-_lastFlush>=2.0 then _lastFlush=now2; flushAllCaches() end
+                    local clear=isRiftAllClear()
                     if not clear then
-                        local hasRiftsMob = false
-                        lastTgtUp = 0
-                        for _, m in next, ServerTargets:GetChildren() do
-                            if m.Name:sub(1,5) == "Rifts" and m.Parent and isMobAlive(m) then
-                                hasRiftsMob = true; break
-                            end
+                        local hasRiftsMob=false; lastTgtUp=0
+                        for _,m in next,ServerTargets:GetChildren() do
+                            if m.Name:sub(1,5)=="Rifts" and m.Parent and isMobAlive(m) then hasRiftsMob=true; break end
                         end
-                        if hasRiftsMob then noMobTick = 0
-                        else
-                            noMobTick = noMobTick + 1
-                            if noMobTick >= CLEAR_CONFIRM then break end
-                        end
-                    else
-                        noMobTick = noMobTick + 1
-                        if noMobTick >= CLEAR_CONFIRM then break end
-                    end
+                        if hasRiftsMob then noMobTick=0
+                        else noMobTick=noMobTick+1; if noMobTick>=CLEAR_CONFIRM then break end end
+                    else noMobTick=noMobTick+1; if noMobTick>=CLEAR_CONFIRM then break end end
                 end
-
-                if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
-                cRiftMob = nil; cRiftPart = nil
-
+                if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift=nil end
+                cRiftMob=nil; cRiftPart=nil
                 if cancelFn() then riftCleanup(); getgenv().riftSettling=false; setupWatchers(); continue end
-
                 exitRiftViaTravel(cancelFn)
-
                 if cancelFn() then riftCleanup(); getgenv().riftSettling=false; setupWatchers(); continue end
-
-                getgenv().riftSettling = true
-                State.riftSettling     = true
-                State.riftActive       = false
-
+                getgenv().riftSettling=true; State.riftSettling=true; State.riftActive=false
                 if autoRiftRun and not cancelFn() then
-                    lastStgUp = 0
-                    if getStg() ~= "Lobby" then
-                        waitReady("Lobby", 18, teleportBuffers["Lobby"], 1.0, cancelFn)
-                    end
-                    task.wait(0.5); lastStgUp = 0
-                    if isCharReady("Lobby") then
-                        task.wait(0.3); lastStgUp = 0
-                        if isCharReady("Lobby") then task.wait(0.2) end
-                    end
+                    lastStgUp=0
+                    if getStg()~="Lobby" then waitReady("Lobby",18,teleportBuffers["Lobby"],1.0,cancelFn) end
+                    task.wait(0.5); lastStgUp=0
+                    if isCharReady("Lobby") then task.wait(0.3); lastStgUp=0; if isCharReady("Lobby") then task.wait(0.2) end end
                 end
-
-                if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
-                getgenv().doRift   = false
-                State.riftActive   = false
-                State.riftDetected = false
-                if summonPaused and summonPauseReason == "rift" then
-                    summonPaused = false; summonPauseReason = nil
-                end
+                if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift=nil end
+                getgenv().doRift=false; State.riftActive=false; State.riftDetected=false
+                if summonPaused and summonPauseReason=="rift" then summonPaused=false; summonPauseReason=nil end
                 disconnectWatchers()
-
-                task.wait(0.3); lastStgUp = 0; lastHRPUp = 0
-                task.wait(0.2); lastStgUp = 0
-                getgenv().riftSettling = false
-                State.riftSettling     = false
-
+                task.wait(0.3); lastStgUp=0; lastHRPUp=0; task.wait(0.2); lastStgUp=0
+                getgenv().riftSettling=false; State.riftSettling=false
                 if autoRiftRun then setupWatchers() end
             end
 
             disconnectWatchers()
-            if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift = nil end
-            getgenv().doRift       = false
-            getgenv().riftSettling = false
-            State.riftActive       = false
-            State.riftSettling     = false
-            if summonPaused and summonPauseReason == "rift" then
-                summonPaused = false; summonPauseReason = nil
-            end
+            if Conns.rift then pcall(function() Conns.rift:Disconnect() end); Conns.rift=nil end
+            getgenv().doRift=false; getgenv().riftSettling=false
+            State.riftActive=false; State.riftSettling=false
+            if summonPaused and summonPauseReason=="rift" then summonPaused=false; summonPauseReason=nil end
         end)
     end
 })
 
 -- ============================================================
--- AUTO ABANDON VILLAGE (Boss) — waits for BOTH Rift AND Raid
+-- AUTO BOSS
 -- ============================================================
 Tabs.Gen:Section({Title="Abandon Village"})
 
 local function getBossMobInStage()
-    lastTgtUp = 0
+    lastTgtUp=0
     for _,m in next,getSTgts() do
         if m.Name:sub(1,9)=="BossFight" and isMobAlive(m) then
             return m, m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
         end
     end
-    return nil, nil
+    return nil,nil
 end
 
 local function detectBossFightUI()
-    local pg = lp:FindFirstChild("PlayerGui"); if not pg then return false end
-    local gm = pg:FindFirstChild("Gamemodes"); if not gm then return false end
-    local bf = gm:FindFirstChild("BossFight")
-    return bf ~= nil and bf.Visible == true
+    local pg=lp:FindFirstChild("PlayerGui"); if not pg then return false end
+    local gm=pg:FindFirstChild("Gamemodes"); if not gm then return false end
+    local bf=gm:FindFirstChild("BossFight")
+    return bf~=nil and bf.Visible==true
 end
 
-local function waitCharReady(stageName, cancelFn, timeout, confirmNeeded)
-    confirmNeeded = confirmNeeded or 2
-    local dl = os.clock() + (timeout or 18)
-    local confirmed = 0
-    while os.clock() < dl do
+local function waitCharReady(stageName,cancelFn,timeout,confirmNeeded)
+    confirmNeeded=confirmNeeded or 2; local dl=os.clock()+(timeout or 18); local confirmed=0
+    while os.clock()<dl do
         if cancelFn and cancelFn() then return false end
-        lastStgUp = 0
-        if getStg() == stageName then
-            local char = lp.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            local hum  = char and char:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hum.Health > 0 and hrp.Position.Y > -50 then
-                confirmed = confirmed + 1
-                if confirmed >= confirmNeeded then return true end
+        lastStgUp=0
+        if getStg()==stageName then
+            local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+            local hum=char and char:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health>0 and hrp.Position.Y>-50 then
+                confirmed=confirmed+1; if confirmed>=confirmNeeded then return true end
                 task.wait(0.10); continue
             end
         end
-        confirmed = 0; task.wait(0.07)
+        confirmed=0; task.wait(0.07)
     end
     return false
 end
 
-local function waitBossFightUI(timeout, cancelFn)
+local function waitBossFightUI(timeout,cancelFn)
     if detectBossFightUI() then return true end
-    local found = false; local conns = {}
+    local found=false; local conns={}
     pcall(function()
-        local pg = lp:FindFirstChild("PlayerGui")
-        local gm = pg and pg:FindFirstChild("Gamemodes")
+        local pg=lp:FindFirstChild("PlayerGui"); local gm=pg and pg:FindFirstChild("Gamemodes")
         if gm then
-            table.insert(conns, gm.ChildAdded:Connect(function(child)
-                if child.Name == "BossFight" then
-                    task.wait(0.05)
-                    if child.Visible then found = true end
-                    table.insert(conns, child:GetPropertyChangedSignal("Visible"):Connect(function()
-                        if child.Visible then found = true end
+            table.insert(conns,gm.ChildAdded:Connect(function(child)
+                if child.Name=="BossFight" then
+                    task.wait(0.05); if child.Visible then found=true end
+                    table.insert(conns,child:GetPropertyChangedSignal("Visible"):Connect(function()
+                        if child.Visible then found=true end
                     end))
                 end
             end))
-            local bf = gm:FindFirstChild("BossFight")
+            local bf=gm:FindFirstChild("BossFight")
             if bf then
-                if bf.Visible then found = true end
-                table.insert(conns, bf:GetPropertyChangedSignal("Visible"):Connect(function()
-                    if bf.Visible then found = true end
+                if bf.Visible then found=true end
+                table.insert(conns,bf:GetPropertyChangedSignal("Visible"):Connect(function()
+                    if bf.Visible then found=true end
                 end))
             end
         end
     end)
-    local dl = os.clock() + timeout
-    while not found and os.clock() < dl do
+    local dl=os.clock()+timeout
+    while not found and os.clock()<dl do
         if cancelFn and cancelFn() then break end
-        if detectBossFightUI() then found = true; break end
+        if detectBossFightUI() then found=true; break end
         task.wait(0.025)
     end
     for _,c in ipairs(conns) do pcall(function() c:Disconnect() end) end
     return found
 end
 
-local function waitBossEntering(timeout, cancelFn)
-    local entering = Workspace:FindFirstChild("BossFight_Entering")
-    if entering and entering:FindFirstChild("Demon Forest") then
-        return entering:FindFirstChild("Demon Forest")
-    end
-    local found = nil; local conn1, conn2 = nil, nil
+local function waitBossEntering(timeout,cancelFn)
+    local entering=Workspace:FindFirstChild("BossFight_Entering")
+    if entering and entering:FindFirstChild("Demon Forest") then return entering:FindFirstChild("Demon Forest") end
+    local found=nil; local conn1,conn2=nil,nil
     pcall(function()
         if entering then
-            conn1 = entering.ChildAdded:Connect(function(child)
-                if child.Name == "Demon Forest" then found = child end
-            end)
+            conn1=entering.ChildAdded:Connect(function(child) if child.Name=="Demon Forest" then found=child end end)
         else
-            conn2 = Workspace.ChildAdded:Connect(function(child)
-                if child.Name == "BossFight_Entering" then
-                    entering = child
-                    local df = child:FindFirstChild("Demon Forest")
-                    if df then found = df; return end
-                    conn1 = child.ChildAdded:Connect(function(c)
-                        if c.Name == "Demon Forest" then found = c end
-                    end)
+            conn2=Workspace.ChildAdded:Connect(function(child)
+                if child.Name=="BossFight_Entering" then
+                    entering=child; local df=child:FindFirstChild("Demon Forest")
+                    if df then found=df; return end
+                    conn1=child.ChildAdded:Connect(function(c) if c.Name=="Demon Forest" then found=c end end)
                 end
             end)
         end
     end)
-    local dl = os.clock() + timeout
-    while not found and os.clock() < dl do
+    local dl=os.clock()+timeout
+    while not found and os.clock()<dl do
         if cancelFn and cancelFn() then break end
-        local e2 = Workspace:FindFirstChild("BossFight_Entering")
-        if e2 then
-            local df = e2:FindFirstChild("Demon Forest")
-            if df then found = df; break end
-        end
+        local e2=Workspace:FindFirstChild("BossFight_Entering")
+        if e2 then local df=e2:FindFirstChild("Demon Forest"); if df then found=df; break end end
         task.wait(0.05)
     end
     if conn1 then pcall(function() conn1:Disconnect() end) end
@@ -3334,50 +2902,36 @@ end
 
 local function bossFail()
     clearBossConn()
-    getgenv().doBoss      = false
-    getgenv().bossWaiting = false
-    State.bossActive      = false
-    if summonPaused and summonPauseReason == "boss" then
-        summonPaused = false; summonPauseReason = nil
-    end
+    getgenv().doBoss=false; getgenv().bossWaiting=false; State.bossActive=false
+    if summonPaused and summonPauseReason=="boss" then summonPaused=false; summonPauseReason=nil end
 end
 
 local function isBossReady()
     return isBossEventActive()
-        and not State.riftActive
-        and not State.riftSettling
-        and (os.clock() - (getgenv().lastBossKill or 0) >= 25)
+        and not State.riftActive and not State.riftSettling
+        and (os.clock()-(getgenv().lastBossKill or 0)>=25)
 end
 
 local function waitUntilBackAtLobby(cancelFn)
-    local buf  = teleportBuffers["Lobby"]
-    local dl   = os.clock() + 45
-    local last = -99
-    while os.clock() < dl do
+    local buf=teleportBuffers["Lobby"]; local dl=os.clock()+45; local last=-99
+    while os.clock()<dl do
         if cancelFn and cancelFn() then return false end
         if State.riftActive then return false end
-
-        lastStgUp = 0
-        if getStg() == "Lobby" then
-            local char = lp.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            local hum  = char and char:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hum.Health > 0 and hrp.Position.Y > -50 then
-                task.wait(0.3); lastStgUp = 0
-                if getStg() == "Lobby" then
-                    char = lp.Character
-                    hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                    hum  = char and char:FindFirstChildOfClass("Humanoid")
-                    if hrp and hum and hum.Health > 0 then return true end
+        lastStgUp=0
+        if getStg()=="Lobby" then
+            local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+            local hum=char and char:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health>0 and hrp.Position.Y>-50 then
+                task.wait(0.3); lastStgUp=0
+                if getStg()=="Lobby" then
+                    char=lp.Character; hrp=char and char:FindFirstChild("HumanoidRootPart")
+                    hum=char and char:FindFirstChildOfClass("Humanoid")
+                    if hrp and hum and hum.Health>0 then return true end
                 end
             end
         end
-
-        local now = os.clock()
-        if now - last >= 1.5 then
-            if buf then R.Byte:FireServer(buf) end
-            lastStgUp = 0; last = now
-        end
+        local now=os.clock()
+        if now-last>=1.5 then if buf then R.Byte:FireServer(buf) end; lastStgUp=0; last=now end
         task.wait(0.08)
     end
     return false
@@ -3386,214 +2940,147 @@ end
 Tabs.Gen:Toggle({
     Title="Auto Abandon Village", Flag="AutoAbandon", Value=false,
     Callback=function(state)
-        getgenv().autoBoss = state
+        getgenv().autoBoss=state
         if not state then bossFail(); return end
-
         task.spawn(function()
-            local function cancelBoss()
-                return not getgenv().autoBoss
-            end
-            -- Rift interrupt: Rift is active or just finished settling
-            local function riftInterrupt()
-                return State.riftActive or State.riftDetected
-            end
-            -- ── NEW: Raid is still running (any phase) ──────
-            local function raidInterrupt()
-                return isRaidBusy()
-            end
+            local function cancelBoss() return not getgenv().autoBoss end
+            local function riftInterrupt() return State.riftActive or State.riftDetected end
+            local function raidInterrupt() return isRaidBusy() end
 
-            local bossSignalFired = false
-            local bossSignalConn  = nil
+            local bossSignalFired=false; local bossSignalConn=nil
             pcall(function()
-                bossSignalConn = BossesValue:GetPropertyChangedSignal("Value"):Connect(function()
-                    if isBossEventActive() then bossSignalFired = true end
+                bossSignalConn=BossesValue:GetPropertyChangedSignal("Value"):Connect(function()
+                    if isBossEventActive() then bossSignalFired=true end
                 end)
             end)
 
             while getgenv().autoBoss do
-                if not waitUntilAlive(cancelBoss, 20) then break end
+                if not waitUntilAlive(cancelBoss,20) then break end
                 if cancelBoss() then break end
                 clearBossConn()
-
-                -- ── Wait for Rift to clear ───────────────────
                 if riftInterrupt() then
-                    getgenv().bossWaiting = false
-                    local riftWaitDl = os.clock() + 600
-                    while getgenv().autoBoss and (State.riftActive or State.riftSettling)
-                          and os.clock() < riftWaitDl do
-                        task.wait(0.2)
-                    end
+                    getgenv().bossWaiting=false
+                    local riftWaitDl=os.clock()+600
+                    while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock()<riftWaitDl do task.wait(0.2) end
                     if cancelBoss() then break end
                 end
-
-                -- ── Check boss event ─────────────────────────
                 if not isBossReady() then
-                    bossSignalFired = false
-                    getgenv().bossWaiting = false
-                    local waitDl = os.clock() + 10
-                    while os.clock() < waitDl and not isBossReady() do
+                    bossSignalFired=false; getgenv().bossWaiting=false
+                    local waitDl=os.clock()+10
+                    while os.clock()<waitDl and not isBossReady() do
                         if not getgenv().autoBoss then break end
-                        if bossSignalFired then bossSignalFired = false; break end
+                        if bossSignalFired then bossSignalFired=false; break end
                         if riftInterrupt() then break end
                         task.wait(0.5)
                     end
                     if not isBossReady() then task.wait(0.2); continue end
                 end
-
-                getgenv().bossWaiting = true
-
-                -- ── WAIT FOR RIFT (highest priority) ─────────
+                getgenv().bossWaiting=true
                 if riftInterrupt() then
-                    getgenv().bossWaiting = false
-                    local dl = os.clock() + 600
-                    while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do
-                        task.wait(0.2)
-                    end
-                    if cancelBoss() then break end
-                    continue   -- re-check boss event after rift
+                    getgenv().bossWaiting=false
+                    local dl=os.clock()+600
+                    while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock()<dl do task.wait(0.2) end
+                    if cancelBoss() then break end; continue
                 end
-
-                -- ── WAIT FOR RAID (second priority) ──────────
-                -- Boss should NOT interrupt a running raid; wait for it to fully finish
                 if raidInterrupt() then
-                    local raidWaitDl = os.clock() + 600
-                    while getgenv().autoBoss and raidInterrupt() and os.clock() < raidWaitDl do
+                    local raidWaitDl=os.clock()+600
+                    while getgenv().autoBoss and raidInterrupt() and os.clock()<raidWaitDl do
                         if cancelBoss() then break end
-                        -- If rift spawns while waiting for raid → stop waiting, let rift take over
                         if riftInterrupt() then break end
                         task.wait(0.2)
                     end
                     if cancelBoss() then break end
-                    -- If rift interrupted, loop back to handle rift first
-                    if riftInterrupt() then
-                        getgenv().bossWaiting = false
-                        continue
-                    end
-                    -- Re-check boss event is still active
-                    if not isBossReady() then getgenv().bossWaiting = false; continue end
+                    if riftInterrupt() then getgenv().bossWaiting=false; continue end
+                    if not isBossReady() then getgenv().bossWaiting=false; continue end
                 end
-
-                -- ── PROCEED TO BOSS ───────────────────────────
                 summonPaused=true; summonPauseReason="boss"
                 getgenv().doBoss=true; State.bossActive=true
-
                 R.Byte:FireServer(teleportBuffers["Demon Forest"]); lastStgUp=0
-
-                local ok = waitCharReady("Demon Forest", cancelBoss, 18, 2)
+                local ok=waitCharReady("Demon Forest",cancelBoss,18,2)
                 if not ok or cancelBoss() or riftInterrupt() then
                     bossFail()
                     if riftInterrupt() then
-                        local dl = os.clock() + 600
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
+                        local dl=os.clock()+600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock()<dl do task.wait(0.2) end
                     end
                     task.wait(1.0); continue
                 end
                 if not isBossEventActive() then bossFail(); task.wait(1.0); continue end
-
                 task.wait(0.6)
                 if cancelBoss() or riftInterrupt() then
                     bossFail()
                     if riftInterrupt() then
-                        local dl = os.clock() + 600
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
+                        local dl=os.clock()+600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock()<dl do task.wait(0.2) end
                     end
                     continue
                 end
-
-                local MAX_RETRY = 6
-                local foundUI   = false
-
-                for attempt = 1, MAX_RETRY do
+                local MAX_RETRY=6; local foundUI=false
+                for attempt=1,MAX_RETRY do
                     if cancelBoss() or not isBossEventActive() or riftInterrupt() then break end
                     if detectBossFightUI() then foundUI=true; break end
-
-                    local doorPart = waitBossEntering(4.0, function()
-                        return cancelBoss() or riftInterrupt()
-                    end)
+                    local doorPart=waitBossEntering(4.0,function() return cancelBoss() or riftInterrupt() end)
                     if not doorPart then
                         R.Byte:FireServer(teleportBuffers["Demon Forest"]); lastStgUp=0
-                        waitCharReady("Demon Forest", cancelBoss, 12, 2)
-                        task.wait(0.8); continue
+                        waitCharReady("Demon Forest",cancelBoss,12,2); task.wait(0.8); continue
                     end
-
-                    if not stagedTpToBoss(doorPart, function()
-                        return cancelBoss() or riftInterrupt()
-                    end) then
-                        if attempt < MAX_RETRY then
+                    if not stagedTpToBoss(doorPart,function() return cancelBoss() or riftInterrupt() end) then
+                        if attempt<MAX_RETRY then
                             R.Byte:FireServer(teleportBuffers["Demon Forest"]); lastStgUp=0
-                            waitCharReady("Demon Forest", cancelBoss, 12, 2)
-                            task.wait(0.8)
-                        end
-                        continue
+                            waitCharReady("Demon Forest",cancelBoss,12,2); task.wait(0.8)
+                        end; continue
                     end
                     if cancelBoss() or riftInterrupt() then break end
-
-                    if waitBossFightUI(5.0, function()
-                        return cancelBoss() or riftInterrupt()
-                    end) then foundUI=true; break end
-
-                    if attempt < MAX_RETRY then
+                    if waitBossFightUI(5.0,function() return cancelBoss() or riftInterrupt() end) then foundUI=true; break end
+                    if attempt<MAX_RETRY then
                         R.Byte:FireServer(teleportBuffers["Demon Forest"]); lastStgUp=0
-                        waitCharReady("Demon Forest", cancelBoss, 12, 2)
-                        task.wait(1.0)
+                        waitCharReady("Demon Forest",cancelBoss,12,2); task.wait(1.0)
                     end
                 end
-
                 if not foundUI or cancelBoss() or riftInterrupt() then
                     bossFail()
                     if riftInterrupt() then
-                        local dl = os.clock() + 600
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
+                        local dl=os.clock()+600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock()<dl do task.wait(0.2) end
                     end
                     task.wait(1.0); continue
                 end
-
                 clearBossConn(); task.wait(2.0)
                 if cancelBoss() or riftInterrupt() or not detectBossFightUI() then
                     bossFail()
                     if riftInterrupt() then
-                        local dl = os.clock() + 600
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
-                    end
-                    continue
+                        local dl=os.clock()+600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock()<dl do task.wait(0.2) end
+                    end; continue
                 end
-
-                local cBoss, cBossPart = nil, nil
-                local spawnDl = os.clock() + 12
-                local bossSpawnConn = nil; local bossJustSpawned = false
+                local cBoss,cBossPart=nil,nil; local spawnDl=os.clock()+12
+                local bossSpawnConn=nil; local bossJustSpawned=false
                 pcall(function()
-                    bossSpawnConn = ServerTargets.ChildAdded:Connect(function(child)
+                    bossSpawnConn=ServerTargets.ChildAdded:Connect(function(child)
                         if child.Name:sub(1,9)=="BossFight" then bossJustSpawned=true end
                     end)
                 end)
-
-                while os.clock() < spawnDl do
+                while os.clock()<spawnDl do
                     if cancelBoss() or riftInterrupt() then break end
                     if bossJustSpawned then bossJustSpawned=false end
-                    cBoss, cBossPart = getBossMobInStage()
-                    if cBoss then break end
+                    cBoss,cBossPart=getBossMobInStage(); if cBoss then break end
                     task.wait(0.08)
                 end
                 if bossSpawnConn then pcall(function() bossSpawnConn:Disconnect() end) end
-
                 if not cBoss or cancelBoss() or riftInterrupt() then
                     bossFail()
                     if riftInterrupt() then
-                        local dl = os.clock() + 600
-                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
-                    end
-                    task.wait(1.0); continue
+                        local dl=os.clock()+600
+                        while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock()<dl do task.wait(0.2) end
+                    end; task.wait(1.0); continue
                 end
-
                 if cBossPart then
-                    local hrpNow = getHRP()
-                    if hrpNow then killVelocity(hrpNow); hrpNow.CFrame = CFrame.new(cBossPart.Position) end
+                    local hrpNow=getHRP()
+                    if hrpNow then killVelocity(hrpNow); hrpNow.CFrame=CFrame.new(cBossPart.Position) end
                 end
                 task.wait(0.3)
-
-                local fighting = true
-                clearBossConn()
-                Conns.boss = RunService.Heartbeat:Connect(function()
+                local fighting=true; clearBossConn()
+                Conns.boss=RunService.Heartbeat:Connect(function()
                     if not fighting or not getgenv().autoBoss then return end
                     if State.riftActive then fighting=false; return end
                     sendAtk()
@@ -3608,69 +3095,45 @@ Tabs.Gen:Toggle({
                         end
                     end
                     if cBoss and cBossPart then
-                        local hrp = getHRP(); if not hrp then return end
-                        local mPos = cBossPart.Position
-                        local dv   = hrp.Position - mPos
-                        if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 400 then
-                            killVelocity(hrp); hrp.CFrame = CFrame.new(mPos)
+                        local hrp=getHRP(); if not hrp then return end
+                        local mPos=cBossPart.Position; local dv=hrp.Position-mPos
+                        if dv.X*dv.X+dv.Y*dv.Y+dv.Z*dv.Z>400 then
+                            killVelocity(hrp); hrp.CFrame=CFrame.new(mPos)
                         end
                         if not dpsActive then reqAttack(cBoss) end
                     end
                 end)
-
-                local bossDl = os.clock() + 300
-                while fighting and getgenv().autoBoss and os.clock() < bossDl do
+                local bossDl=os.clock()+300
+                while fighting and getgenv().autoBoss and os.clock()<bossDl do
                     if State.riftActive then fighting=false; break end
-                    lastTgtUp=0
-                    local alive = false
-                    for _,m in next,getSTgts() do
-                        if m.Name:sub(1,9)=="BossFight" and isMobAlive(m) then alive=true; break end
-                    end
+                    lastTgtUp=0; local alive=false
+                    for _,m in next,getSTgts() do if m.Name:sub(1,9)=="BossFight" and isMobAlive(m) then alive=true; break end end
                     if not alive then
-                        task.wait(0.3); lastTgtUp=0
-                        local stillAlive = false
-                        for _,m in next,getSTgts() do
-                            if m.Name:sub(1,9)=="BossFight" and isMobAlive(m) then stillAlive=true; break end
-                        end
-                        if not stillAlive then
-                            getgenv().lastBossKill=os.clock(); fighting=false; break
-                        end
+                        task.wait(0.3); lastTgtUp=0; local stillAlive=false
+                        for _,m in next,getSTgts() do if m.Name:sub(1,9)=="BossFight" and isMobAlive(m) then stillAlive=true; break end end
+                        if not stillAlive then getgenv().lastBossKill=os.clock(); fighting=false; break end
                     end
                     task.wait(0.08)
                 end
-
                 fighting=false; clearBossConn()
-                getgenv().doBoss      = false
-                getgenv().bossWaiting = false
-                State.bossActive      = false
-
+                getgenv().doBoss=false; getgenv().bossWaiting=false; State.bossActive=false
                 if riftInterrupt() then
-                    if summonPaused and summonPauseReason=="boss" then
-                        summonPaused=false; summonPauseReason=nil
-                    end
-                    local dl = os.clock() + 600
-                    while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock() < dl do task.wait(0.2) end
+                    if summonPaused and summonPauseReason=="boss" then summonPaused=false; summonPauseReason=nil end
+                    local dl=os.clock()+600
+                    while getgenv().autoBoss and (State.riftActive or State.riftSettling) and os.clock()<dl do task.wait(0.2) end
                     continue
                 end
-
-                if getgenv().autoBoss then
-                    waitUntilBackAtLobby(cancelBoss)
-                end
-
-                if summonPaused and summonPauseReason=="boss" then
-                    summonPaused=false; summonPauseReason=nil
-                end
+                if getgenv().autoBoss then waitUntilBackAtLobby(cancelBoss) end
+                if summonPaused and summonPauseReason=="boss" then summonPaused=false; summonPauseReason=nil end
             end
-
             if bossSignalConn then pcall(function() bossSignalConn:Disconnect() end) end
-            getgenv().bossWaiting=false
-            State.bossActive=false
+            getgenv().bossWaiting=false; State.bossActive=false
         end)
     end
 })
 
 -- ============================================================
--- TELEPORT TAB
+-- TELEPORT
 -- ============================================================
 Tabs.Tele:Section({Title="World Teleport"})
 Tabs.Tele:Dropdown({Title="Select World", Flag="TeleportWorld",
@@ -3694,20 +3157,16 @@ end
 
 local function findNearestEggModel(targetMap)
     if not SummonersFolder then return nil end
-    local hrp = getHRP(); if not hrp then return nil end
-    local hPos = hrp.Position
-    local best, bestSq = nil, math.huge
-    for _, child in next, SummonersFolder:GetChildren() do
-        if child.Name == targetMap then
-            local part = nil
-            if child:IsA("BasePart") then part = child
-            elseif child:IsA("Model") then
-                part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart", true)
-            end
+    local hrp=getHRP(); if not hrp then return nil end
+    local hPos=hrp.Position; local best,bestSq=nil,math.huge
+    for _,child in next,SummonersFolder:GetChildren() do
+        if child.Name==targetMap then
+            local part=nil
+            if child:IsA("BasePart") then part=child
+            elseif child:IsA("Model") then part=child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart",true) end
             if part and part.Parent then
-                local d = hPos - part.Position
-                local dsq = d.X*d.X + d.Y*d.Y + d.Z*d.Z
-                if dsq < bestSq then bestSq = dsq; best = child end
+                local d=hPos-part.Position; local dsq=d.X*d.X+d.Y*d.Y+d.Z*d.Z
+                if dsq<bestSq then bestSq=dsq; best=child end
             end
         end
     end
@@ -3716,31 +3175,25 @@ end
 
 local function snapToEggModel(model)
     if not model then return false end
-    local part = nil
-    if model:IsA("BasePart") then part = model
-    elseif model:IsA("Model") then
-        part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-    end
+    local part=nil
+    if model:IsA("BasePart") then part=model
+    elseif model:IsA("Model") then part=model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart",true) end
     if not part or not part.Parent then return false end
-    local hrp = getHRP(); if not hrp then return false end
-    killVelocity(hrp)
-    hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
-    task.wait(0.08)
-    return true
+    local hrp=getHRP(); if not hrp then return false end
+    killVelocity(hrp); hrp.CFrame=CFrame.new(part.Position+Vector3.new(0,3,0))
+    task.wait(0.08); return true
 end
 
-local EGG_SNAP_SQ = 36
+local EGG_SNAP_SQ=36
 local function isfarFromEgg(model)
     if not model then return true end
-    local part = nil
-    if model:IsA("BasePart") then part = model
-    elseif model:IsA("Model") then
-        part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-    end
+    local part=nil
+    if model:IsA("BasePart") then part=model
+    elseif model:IsA("Model") then part=model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart",true) end
     if not part or not part.Parent then return true end
-    local hrp = getHRP(); if not hrp then return true end
-    local dv = hrp.Position - part.Position
-    return (dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z) > EGG_SNAP_SQ
+    local hrp=getHRP(); if not hrp then return true end
+    local dv=hrp.Position-part.Position
+    return (dv.X*dv.X+dv.Y*dv.Y+dv.Z*dv.Z)>EGG_SNAP_SQ
 end
 
 Tabs.Sum:Dropdown({
@@ -3753,99 +3206,82 @@ Tabs.Sum:Dropdown({
 Tabs.Sum:Toggle({
     Title="Auto Summon Egg", Flag="AutoSummon", Value=false,
     Callback=function(state)
-        getgenv().autoSummon = state
-        anyEggRef = nil; anyEggInitialized = false
+        getgenv().autoSummon=state
+        anyEggRef=nil; anyEggInitialized=false
         if not state then pcall(sendHatchStop); return end
         task.spawn(function()
             local function cancelCheck() return not getgenv().autoSummon end
             local function isBlocked()   return isBusy() or summonPaused end
-
             local function tpToEggMap(targetMap)
-                lastStgUp = 0
-                if getStg() == targetMap then
-                    local char = lp.Character
-                    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-                    if hrp and hum and hrp.Position.Y > -50 and hum.Health > 0 then return true end
+                lastStgUp=0
+                if getStg()==targetMap then
+                    local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+                    local hum=char and char:FindFirstChildOfClass("Humanoid")
+                    if hrp and hum and hrp.Position.Y>-50 and hum.Health>0 then return true end
                 end
-                local buf = teleportBuffers[targetMap]; if not buf then return false end
-                local deadline = os.clock() + 30
-                local lastSend = -99; local interval = 0.8; local confirms = 0
-                while os.clock() < deadline do
+                local buf=teleportBuffers[targetMap]; if not buf then return false end
+                local deadline=os.clock()+30; local lastSend=-99; local interval=0.8; local confirms=0
+                while os.clock()<deadline do
                     if cancelCheck() then return false end
                     if isBlocked() then task.wait(0.4); continue end
-                    local now = os.clock()
-                    if now - lastSend >= interval then
-                        R.Byte:FireServer(buf); lastSend = now; interval = math.min(interval * 1.4, 4.0)
+                    local now=os.clock()
+                    if now-lastSend>=interval then
+                        R.Byte:FireServer(buf); lastSend=now; interval=math.min(interval*1.4,4.0)
                     end
-                    task.wait(0.08); lastStgUp = 0
-                    if getStg() == targetMap then
-                        local char = lp.Character
-                        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-                        if hrp and hum and hrp.Position.Y > -50 and hum.Health > 0 then
-                            confirms = confirms + 1
-                            if confirms >= 2 then return true end
+                    task.wait(0.08); lastStgUp=0
+                    if getStg()==targetMap then
+                        local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+                        local hum=char and char:FindFirstChildOfClass("Humanoid")
+                        if hrp and hum and hrp.Position.Y>-50 and hum.Health>0 then
+                            confirms=confirms+1; if confirms>=2 then return true end
                             task.wait(0.10); continue
                         end
                     end
-                    confirms = 0
+                    confirms=0
                 end
                 return false
             end
-
             local function goToNearestEgg(targetMap)
                 if not SummonersFolder or not SummonersFolder.Parent then
-                    SummonersFolder = Workspace:FindFirstChild("Summoners")
-                    if not SummonersFolder then return false end
+                    SummonersFolder=Workspace:FindFirstChild("Summoners"); if not SummonersFolder then return false end
                 end
-                local eggModel = findNearestEggModel(targetMap)
-                if not eggModel then return false end
+                local eggModel=findNearestEggModel(targetMap); if not eggModel then return false end
                 return snapToEggModel(eggModel)
             end
-
             while getgenv().autoSummon do
                 if cancelCheck() then break end
-                if not waitUntilAlive(cancelCheck, 20) then break end
+                if not waitUntilAlive(cancelCheck,20) then break end
                 if cancelCheck() then break end
                 if isBlocked() then
                     pcall(sendHatchStop)
                     while getgenv().autoSummon and isBlocked() do task.wait(0.3) end
                     if cancelCheck() then break end
                 end
-                local targetMap = getgenv().selSumm or "Namex Planet"
-                lastStgUp = 0
-                if getStg() ~= targetMap then
-                    pcall(sendHatchStop)
-                    local ok = tpToEggMap(targetMap)
-                    if cancelCheck() then break end
-                    if not ok then task.wait(2.0); continue end
+                local targetMap=getgenv().selSumm or "Namex Planet"
+                lastStgUp=0
+                if getStg()~=targetMap then
+                    pcall(sendHatchStop); local ok=tpToEggMap(targetMap)
+                    if cancelCheck() then break end; if not ok then task.wait(2.0); continue end
                     task.wait(0.3)
                 end
                 if cancelCheck() then break end
                 if isBlocked() then pcall(sendHatchStop); continue end
-                local eggFound = goToNearestEgg(targetMap)
-                if not eggFound then task.wait(0.5); continue end
+                local eggFound=goToNearestEgg(targetMap); if not eggFound then task.wait(0.5); continue end
                 if cancelCheck() then break end
                 sendHatchStart()
-                local _hatchKeepLast = os.clock()
-                local _distCheckLast = os.clock()
-                local cachedEgg      = findNearestEggModel(targetMap)
+                local _hatchKeepLast=os.clock(); local _distCheckLast=os.clock()
+                local cachedEgg=findNearestEggModel(targetMap)
                 while getgenv().autoSummon do
                     task.wait(0.12)
                     if cancelCheck() then break end
                     if isBlocked() then pcall(sendHatchStop); break end
-                    lastStgUp = 0
-                    if getStg() ~= targetMap then pcall(sendHatchStop); break end
-                    local now = os.clock()
-                    if now - _hatchKeepLast >= 3.0 then
-                        _hatchKeepLast = now; sendHatchStart()
-                    end
-                    if now - _distCheckLast >= 0.5 then
-                        _distCheckLast = now
-                        if not cachedEgg or not cachedEgg.Parent then
-                            cachedEgg = findNearestEggModel(targetMap)
-                        end
+                    lastStgUp=0
+                    if getStg()~=targetMap then pcall(sendHatchStop); break end
+                    local now=os.clock()
+                    if now-_hatchKeepLast>=3.0 then _hatchKeepLast=now; sendHatchStart() end
+                    if now-_distCheckLast>=0.5 then
+                        _distCheckLast=now
+                        if not cachedEgg or not cachedEgg.Parent then cachedEgg=findNearestEggModel(targetMap) end
                         if cachedEgg and isfarFromEgg(cachedEgg) then snapToEggModel(cachedEgg) end
                     end
                 end
@@ -3891,25 +3327,26 @@ lp.CharacterAdded:Connect(function()
     task.wait(0.5)
     if nSEnb then orgNm.dn=nil; orgNm.un=nil; orgNm.ti=nil; updateNameSpoof() end
     lastHRPUp=0; lastPartUp=0; lastStgUp=0; lastTgtUp=0
+    -- Refresh MyUnits reference หลัง respawn
+    local inv=MyData:FindFirstChild("Inventory")
+    MyUnits = inv and inv:FindFirstChild("Units") or MyUnits
     unitServerFolder=nil; lastUnitFolderCheck=0
 end)
 Tabs.Misc:Button({Title="Toggle Name Spoofer", Callback=function() nSEnb=not nSEnb; updateNameSpoof() end})
 
 Tabs.Misc:Section({Title="UI Cleaner"})
 do
-    local _rerollUIConn = nil
+    local _rerollUIConn=nil
     Tabs.Misc:Toggle({
         Title="Hide Reroll UI", Flag="HideRerollUI", Value=false,
         Callback=function(state)
-            local pg = lp:FindFirstChild("PlayerGui")
-            local rv = pg and pg:FindFirstChild("Rerolls_Visuals")
-            if rv then rv.Enabled = not state end
+            local pg=lp:FindFirstChild("PlayerGui"); local rv=pg and pg:FindFirstChild("Rerolls_Visuals")
+            if rv then rv.Enabled=not state end
             if _rerollUIConn then _rerollUIConn:Disconnect(); _rerollUIConn=nil end
             if state then
-                _rerollUIConn = RunService.Heartbeat:Connect(function()
-                    local pg2 = lp:FindFirstChild("PlayerGui")
-                    local rv2 = pg2 and pg2:FindFirstChild("Rerolls_Visuals")
-                    if rv2 and rv2.Enabled then rv2.Enabled = false end
+                _rerollUIConn=RunService.Heartbeat:Connect(function()
+                    local pg2=lp:FindFirstChild("PlayerGui"); local rv2=pg2 and pg2:FindFirstChild("Rerolls_Visuals")
+                    if rv2 and rv2.Enabled then rv2.Enabled=false end
                 end)
             end
         end
@@ -3917,24 +3354,22 @@ do
 end
 
 do
-    local _rewardConn = nil
+    local _rewardConn=nil
     Tabs.Misc:Toggle({
         Title="Hide Reward UI", Flag="HideRewardUI", Value=false,
         Callback=function(state)
             if _rewardConn then _rewardConn:Disconnect(); _rewardConn=nil end
             local function purgeRewardUIs()
-                local pg = lp:FindFirstChild("PlayerGui")
-                if not pg then return end
-                for _,name in next, {"Obtaind_Visual","Visuals"} do
-                    local ui = pg:FindFirstChild(name)
-                    if ui then pcall(function() ui:Destroy() end) end
+                local pg=lp:FindFirstChild("PlayerGui"); if not pg then return end
+                for _,name in next,{"Obtaind_Visual","Visuals"} do
+                    local ui=pg:FindFirstChild(name); if ui then pcall(function() ui:Destroy() end) end
                 end
             end
             if state then
                 purgeRewardUIs()
-                local pg = lp:FindFirstChild("PlayerGui")
+                local pg=lp:FindFirstChild("PlayerGui")
                 if pg then
-                    _rewardConn = pg.ChildAdded:Connect(function(child)
+                    _rewardConn=pg.ChildAdded:Connect(function(child)
                         if child.Name=="Obtaind_Visual" or child.Name=="Visuals" then
                             task.defer(function() pcall(function() child:Destroy() end) end)
                         end
@@ -3945,123 +3380,84 @@ do
     })
 end
 
-Tabs.Misc:Section({Title="FPS Boost"})
-Tabs.Misc:Button({Title="FPS Boost", Callback=function() end})
-
 -- ============================================================
--- CHARACTER DEATH / RESTORE
+-- CHARACTER DEATH RESTORE
 -- ============================================================
 local RECOVERABLE_FLAGS = {
-    "AutoClick", "AutoNearest", "AutoSelected",
-    "DPSBoost", "SafeBoost",
-    "AutoTraits", "AutoSTTraits", "AutoTalent",
-    "AutoRift", "AutoAbandon", "AutoRaid", "AutoSummon",
+    "AutoClick","AutoNearest","AutoSelected",
+    "DPSBoost","SafeBoost",
+    "AutoTraits","AutoSTTraits","AutoTalent",
+    "AutoRift","AutoAbandon","AutoRaid","AutoSummon",
 }
 
-local _deathSnapshot = {}
-local _isDying       = false
+local _deathSnapshot={}; local _isDying=false
 
 local function snapshotFlags()
-    _deathSnapshot = {}
+    _deathSnapshot={}
     if not Window or not Window.Flags then return end
-    for _, k in ipairs(RECOVERABLE_FLAGS) do
-        local fl = Window.Flags[k]
-        if fl then
-            local ok, val = pcall(function() return fl.Value end)
-            _deathSnapshot[k] = (ok and val == true)
-        end
+    for _,k in ipairs(RECOVERABLE_FLAGS) do
+        local fl=Window.Flags[k]
+        if fl then local ok,val=pcall(function() return fl.Value end); _deathSnapshot[k]=(ok and val==true) end
     end
 end
 
 local function restoreFlags()
     if not Window or not Window.Flags then return end
-    local rdl = os.clock() + 15
-    while os.clock() < rdl do
-        local char = lp.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        if hrp and hum and hum.Health > 0 and hrp.Position.Y > -50 then break end
+    local rdl=os.clock()+15
+    while os.clock()<rdl do
+        local char=lp.Character; local hrp=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health>0 and hrp.Position.Y>-50 then break end
         task.wait(0.15)
     end
     task.wait(0.6)
     lastHRPUp=0; lastPartUp=0; lastStgUp=0; lastTgtUp=0
-    unitServerFolder=nil; lastUnitFolderCheck=0
-    cachedHRP=nil
-    for k in next, mobHumCache     do mobHumCache[k]    = nil end
-    for k in next, mobNameCache    do mobNameCache[k]   = nil end
-    for k in next, mobDisplayCache do mobDisplayCache[k]= nil end
-
-    for _, k in ipairs(RECOVERABLE_FLAGS) do
+    unitServerFolder=nil; lastUnitFolderCheck=0; cachedHRP=nil
+    -- Refresh MyUnits
+    local inv=MyData:FindFirstChild("Inventory")
+    MyUnits = inv and inv:FindFirstChild("Units") or nil
+    for k in next,mobHumCache     do mobHumCache[k]=nil end
+    for k in next,mobNameCache    do mobNameCache[k]=nil end
+    for k in next,mobDisplayCache do mobDisplayCache[k]=nil end
+    for _,k in ipairs(RECOVERABLE_FLAGS) do
         if _deathSnapshot[k] then
             task.wait(0.08)
-            pcall(function()
-                local fl = Window.Flags[k]
-                if fl then fl:Set(true) end
-            end)
+            pcall(function() local fl=Window.Flags[k]; if fl then fl:Set(true) end end)
         end
     end
-    _deathSnapshot = {}
-    _isDying = false
+    _deathSnapshot={}; _isDying=false
 end
 
 lp.CharacterRemoving:Connect(function()
-    if _isDying then return end
-    _isDying = true
+    if _isDying then return end; _isDying=true
     snapshotFlags()
-    for _, k in ipairs({"clk","atk","sel","raid","near","boss","rift","uInfo"}) do
+    for _,k in ipairs({"clk","atk","sel","raid","near","boss","rift","uInfo"}) do
         if Conns[k] then pcall(function() Conns[k]:Disconnect() end); Conns[k]=nil end
     end
     pcall(stopDPSPrecision)
     if dpsActive then pcall(dpsCleanup) end
-    getgenv().safeBoostActive = false
+    getgenv().safeBoostActive=false
     pcall(function() R.Hatch:FireServer(false) end)
-
-    State.riftActive     = false
-    State.riftDetected   = false
-    State.riftSettling   = false
-    State.bossActive     = false
-    State.bossReady      = false
-    State.raidActive     = false
-    State.raidFinishing  = false
-    State.raidInProgress = false
-
-    getgenv().doRift=false;    getgenv().doBoss=false
-    getgenv().riftSettling=false
-    getgenv().raidInP=false;  getgenv().raidSt="IDLE"
-    getgenv().bossWaiting=false
-    getgenv().autoRift=false; getgenv().autoTRun=false
-    getgenv().autoTalRun=false; getgenv().autoSTRun=false
-    getgenv().autoClick=false; getgenv().autoNearest=false
-    getgenv().autoSel=false;  getgenv().autoBoss=false
-    getgenv().autoRaid=false; getgenv().autoSummon=false
-    getgenv().unitQueue={}; getgenv().traitsDoneSet={}
-    getgenv().talentsDoneSet={}; getgenv().stDoneSet={}
-    getgenv().rollingFn=nil; getgenv().rollingPhase=""
+    State.riftActive=false; State.riftDetected=false; State.riftSettling=false
+    State.bossActive=false; State.bossReady=false
+    State.raidActive=false; State.raidFinishing=false; State.raidInProgress=false
+    getgenv().doRift=false; getgenv().doBoss=false; getgenv().riftSettling=false
+    getgenv().raidInP=false; getgenv().raidSt="IDLE"; getgenv().bossWaiting=false
+    getgenv().autoRift=false; getgenv().autoTRun=false; getgenv().autoTalRun=false
+    getgenv().autoSTRun=false; getgenv().autoClick=false; getgenv().autoNearest=false
+    getgenv().autoSel=false; getgenv().autoBoss=false; getgenv().autoRaid=false
+    getgenv().autoSummon=false
+    getgenv().unitQueue={}; getgenv().traitsDoneSet={}; getgenv().talentsDoneSet={}
+    getgenv().stDoneSet={}; getgenv().rollingFn=nil; getgenv().rollingPhase=""
     dpsCleanup()
     anyEggRef=nil; anyEggInitialized=false
     autoRiftRun=false; summonPaused=false; summonPauseReason=nil
     riftDetectedSignal=false; riftDetectedModel=nil
     lastHRPUp=0; lastStgUp=0; unitServerFolder=nil; lastUnitFolderCheck=0
     _lastAtk=0; _lastClk=0
-
-    task.spawn(function()
-        lp.CharacterAdded:Wait()
-        restoreFlags()
-    end)
+    task.spawn(function() lp.CharacterAdded:Wait(); restoreFlags() end)
 end)
 
-task.spawn(function()
-    task.wait(2)
-    pcall(function()
-        if isfile(configFolder.."/Default.json") then
-            local data=HttpService:JSONDecode(readfile(configFolder.."/Default.json"))
-            if data.AutoLoadConfig then
-                for k,v in pairs(data) do if Window.Flags[k] then Window.Flags[k]:Set(v) end end
-            end
-        end
-    end)
-end)
-
-end -- close __EnchantMain__
+end -- __EnchantMain__
 
 __EnchantMain__(loader_isPremium, loader_allowedGames, loader_hwid)
