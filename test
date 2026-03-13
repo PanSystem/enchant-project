@@ -1,13 +1,11 @@
+repeat task.wait() until game:IsLoaded()
 local isPremium, allowedGameIds, hwid = ...
-
 if isPremium == nil or hwid == nil then
     game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack")
     return
 end
-print("✅ Enchant Hub Loaded!")
+print("✅ Enchant Hub Loaded! version.0.1.1")
 print("🔑 Premium Status: " .. tostring(isPremium))
-
-repeat task.wait() until game:IsLoaded()
 
 local LP = game:GetService("Players").LocalPlayer
 local RS = game:GetService("ReplicatedStorage")
@@ -148,6 +146,7 @@ local talentUIToRemote = {
     ["Speed"] = "Speed"
 }
 
+-- สร้าง Lookup table สำหรับเช็ค Talents แบบแม่นยำสูงสุด
 local tVL = {}
 for g, d in pairs(talent_check) do
     for s, v in pairs(d.Status) do
@@ -172,7 +171,7 @@ pcall(function()
     local cardsFolder = RS:FindFirstChild("Assets") and RS.Assets:FindFirstChild("Cards")
     if cardsFolder then
         for _, card in ipairs(cardsFolder:GetChildren()) do
-            if card.Name ~= "Exclusive" and card.Name ~= "Holders" then table.insert(eggList, card.Name) end
+            if card.Name ~= "Exclusive" and card.Name ~= "Holders" and card.Name ~= "Visuals" then table.insert(eggList, card.Name) end
         end
     end
 end)
@@ -237,7 +236,7 @@ local Tabs = {
     Config   = SecTab.ConfigTabSection:Tab({Title = "Configs",   Icon = "chevron-right"}),
 }
 Window:EditOpenButton({Title = "Open Enchant Hub", Icon = "monitor"})
-Window:Tag({Title = "v.0.1.1", Color = Color3.fromHex("#30ff6a"), Radius = 3})
+Window:Tag({Title = "v.0.1.0", Color = Color3.fromHex("#30ff6a"), Radius = 3})
 Tabs.Setting:Keybind({
     Title = "Keybind", Flag = "UIKeybind", Value = "RightAlt",
     Callback = function(v) Window:SetToggleKey(Enum.KeyCode[v]) end
@@ -245,15 +244,16 @@ Tabs.Setting:Keybind({
 
 local SecGeneral = {
     Section_DmgBoost = Tabs.Premium:Section({Title = "Damage Boost", Opened = true}),
-    SecPremiumMisc   = Tabs.Premium:Section({Title = "Premium Misc"}),
-    SecModeFarm      = Tabs.Misc:Section({Title = "Farm Setting"}),
-    AutoFarm         = Tabs.General:Section({Title = "Auto Farm"}),
-    AutoRift         = Tabs.General:Section({Title = "Auto Rift"}),
-    AbandonVillage   = Tabs.General:Section({Title = "Abandon Village"}),
-    AutoRaid         = Tabs.General:Section({Title = "Auto Raid"}),
+    SecPremiumMisc   = Tabs.Premium:Section({Title = "Premium Misc", Opened = true}),
+    SecModeFarm      = Tabs.Misc:Section({Title = "Farm Setting", Opened = true}),
+    AutoFarm         = Tabs.General:Section({Title = "Auto Farm", Opened = true}),
+    AutoRift         = Tabs.General:Section({Title = "Auto Rift", Opened = true}),
+    AbandonVillage   = Tabs.General:Section({Title = "Abandon Village", Opened = true}),
+    AutoRaid         = Tabs.General:Section({Title = "Auto Raid", Opened = true}),
     MiscFeatures     = Tabs.Misc:Section({Title = "Features", Opened = true}),
 }
 
+-- [ระบบ Fast Rerolls ใน Premium]
 local fastRerollEnabled = false
 SecGeneral.SecPremiumMisc:Toggle({
     Title = "Fast Reroll",
@@ -416,15 +416,20 @@ local function getStatLayoutAndTier(statName, valNumStr)
     return bestLayout, bestTier
 end
 
+local function getRawStat(unitFolder, statName)
+    local val = safeGetNestedVal(unitFolder, "Potentials_Adjustment", statName)
+    if val == "N/A" then
+        if statName == "Abilities_DMG" then val = safeGetVal(unitFolder, "Ability_Talent")
+        elseif statName == "Critical_Damage" then val = safeGetVal(unitFolder, "Critical_Talent")
+        else val = safeGetVal(unitFolder, statName .. "_Talent") end
+    end
+    return val
+end
+
 local function waitTalentChange(unitFolder, statName, oldVal, timeout)
     local dl = os.clock() + (timeout or 1.5)
     while os.clock() < dl do
-        local newVal = safeGetNestedVal(unitFolder, "Potentials_Adjustment", statName)
-        if newVal == "N/A" then
-            if statName == "Abilities_DMG" then newVal = safeGetVal(unitFolder, "Ability_Talent")
-            elseif statName == "Critical_Damage" then newVal = safeGetVal(unitFolder, "Critical_Talent")
-            else newVal = safeGetVal(unitFolder, statName .. "_Talent") end
-        end
+        local newVal = getRawStat(unitFolder, statName)
         if newVal ~= "N/A" and newVal ~= oldVal then
             return true 
         end
@@ -450,7 +455,6 @@ local function waitTraitChange(unitFolder, slotToRoll, oldVal, timeout)
     return false
 end
 
--- ฟังก์ชันตัดเลขโรมันออกเพื่อใช้ Lock Traits ได้อย่างปลอดภัย
 local function getBaseTraitName(name)
     local base = string.gsub(name, " III$", "")
     base = string.gsub(base, " II$", "")
@@ -463,7 +467,7 @@ local autoTalentsEnabled = false
 local customQueue = {} 
 local unitStates = {} -- "waiting", "rolling", "done"
 
-local function getUnitInfoText(unitFolder, isRolling, tDone, talDone)
+local function getUnitInfoText(unitFolder, isRolling, currentActiveDisp)
     if not unitFolder then return "No unit selected." end
 
     local nickName = safeGetVal(unitFolder, "Nickname")
@@ -475,43 +479,31 @@ local function getUnitInfoText(unitFolder, isRolling, tDone, talDone)
     local traitSub = safeGetNestedVal(unitFolder, "Traits", "Sub")
     if traitSub == "N/A" then traitSub = safeGetVal(unitFolder, "Sub_Trait") end
     
-    local talDmgRaw = safeGetNestedVal(unitFolder, "Potentials_Adjustment", "Damage")
-    if talDmgRaw == "N/A" then talDmgRaw = safeGetVal(unitFolder, "Damage_Talent") end
-    local _, talDmg = getStatLayoutAndTier("Damage", talDmgRaw)
-    
-    local talAbilRaw = safeGetNestedVal(unitFolder, "Potentials_Adjustment", "Abilities_DMG")
-    if talAbilRaw == "N/A" then talAbilRaw = safeGetVal(unitFolder, "Ability_Talent") end
-    local _, talAbil = getStatLayoutAndTier("Abilities_DMG", talAbilRaw)
-    
-    local talCritRaw = safeGetNestedVal(unitFolder, "Potentials_Adjustment", "Critical_Damage")
-    if talCritRaw == "N/A" then talCritRaw = safeGetVal(unitFolder, "Critical_Talent") end
-    local _, talCrit = getStatLayoutAndTier("Critical_Damage", talCritRaw)
-    
-    local talSpdRaw = safeGetNestedVal(unitFolder, "Potentials_Adjustment", "Speed")
-    if talSpdRaw == "N/A" then talSpdRaw = safeGetVal(unitFolder, "Speed_Talent") end
-    local _, talSpd = getStatLayoutAndTier("Speed", talSpdRaw)
-
-    local tMark = ""
-    if autoTraitsEnabled then tMark = tDone and " [✅ Traits]" or " [🔄 Rolling Traits...]" end
-    
-    local talMark = ""
-    if autoTalentsEnabled then talMark = talDone and " [✅ Talents]" or " [🔄 Rolling Talents...]" end
+    local _, talDmg = getStatLayoutAndTier("Damage", getRawStat(unitFolder, "Damage"))
+    local _, talAbil = getStatLayoutAndTier("Abilities_DMG", getRawStat(unitFolder, "Abilities_DMG"))
+    local _, talCrit = getStatLayoutAndTier("Critical_Damage", getRawStat(unitFolder, "Critical_Damage"))
+    local _, talSpd = getStatLayoutAndTier("Speed", getRawStat(unitFolder, "Speed"))
 
     local info = string.format(
-        "Name units : %s%s%s\nLevel Units : %s\n--- Traits ---\nPrimary > %s\nSub > %s\n--- Talents ---\nDamage > %s\nAbility Damage > %s\nCritical > %s\nSpeed > %s",
-        nickName, tMark, talMark, level, traitPrimary, traitSub, talDmg, talAbil, talCrit, talSpd
+        "Name units : %s\nLevel Units : %s\n--- Traits ---\nPrimary > %s\nSub > %s\n--- Talents ---\nDamage > %s\nAbility Damage > %s\nCritical > %s\nSpeed > %s",
+        nickName, level, traitPrimary, traitSub, talDmg, talAbil, talCrit, talSpd
     )
     
     info = info .. "\n\n--- Queue ---"
     
-    if #customQueue > 0 then
-        for i, uName in ipairs(customQueue) do
-            local state = unitStates[uName] or "waiting"
-            local emoji = " ⏸️ (Waiting)"
-            if state == "rolling" then emoji = " 🔄 (Rolling)"
-            elseif state == "done" then emoji = " ✅ (Done)" end
-            
-            info = info .. "\n" .. i .. ". " .. uName .. emoji
+    if #selectedInventoryUnits > 0 then
+        for i, uName in ipairs(selectedInventoryUnits) do
+            if unitStates[uName] == "done" then
+                info = info .. "\n" .. i .. ". " .. uName .. " ✅ (Done)"
+            elseif uName == currentActiveDisp then
+                if isRolling then
+                    info = info .. "\n" .. i .. ". " .. uName .. " 🔄 (Rolling)"
+                else
+                    info = info .. "\n" .. i .. ". " .. uName .. " ⏸️ (Waiting)"
+                end
+            else
+                info = info .. "\n" .. i .. ". " .. uName .. " ⏸️ (Waiting)"
+            end
         end
     else
         info = info .. "\nNone"
@@ -530,7 +522,6 @@ local targetTalents = {}
 local targetTalentTier = "A"
 
 Tabs.Unit:Section({Title = "Unit Select & Info"})
-
 local unitInfoParagraph = Tabs.Unit:Paragraph({
     Title = "Units Info",
     Desc = "Please select a unit to display info."
@@ -547,37 +538,40 @@ Tabs.Unit:Button({
 })
 
 dropdowns.SelectInventoryUnits = Tabs.Unit:Dropdown({
-    Title = "Select Units (For Auto Queue)",
+    Title = "Select Units",
     Values = inventoryUnitsList,
     Value = {},
     Multi = true,
     AllowNone = true,
-    Callback = function(selectedOptions)
-        local opts = selectedOptions or {}
+    Callback = function(opts)
+        selectedInventoryUnits = opts or {}
         
-        for _, o in ipairs(opts) do
-            if not table.find(customQueue, o) then
-                table.insert(customQueue, o)
-                unitStates[o] = "waiting"
-            end
-        end
-        for i = #customQueue, 1, -1 do
-            if not table.find(opts, customQueue[i]) then
-                unitStates[customQueue[i]] = nil
-                table.remove(customQueue, i)
+        -- ล้างสถานะเก่าออกเมื่อผู้เล่นยกเลิกติ๊กใน Dropdown
+        for k in pairs(unitStates) do
+            if not table.find(selectedInventoryUnits, k) then
+                unitStates[k] = nil
             end
         end
         
-        if #customQueue > 0 then
-            local activeUnitDisp = customQueue[1]
-            for _, un in ipairs(customQueue) do
-                if unitStates[un] ~= "done" then
-                    activeUnitDisp = un
-                    break
-                end
+        -- นำเข้าคิวเรียงตามลำดับใหม่
+        customQueue = {}
+        for _, v in ipairs(selectedInventoryUnits) do
+            table.insert(customQueue, v)
+            if not unitStates[v] then unitStates[v] = "waiting" end
+        end
+        
+        -- อัปเดตโชว์ข้อมูลตัวแรกทันที
+        local activeUnitDisp = nil
+        for _, uName in ipairs(customQueue) do
+            if unitStates[uName] ~= "done" then
+                activeUnitDisp = uName
+                break
             end
+        end
+        
+        if activeUnitDisp then
             local unitFolder = inventoryUnitsMap[activeUnitDisp]
-            unitInfoParagraph:SetDesc(getUnitInfoText(unitFolder, false, false, false))
+            unitInfoParagraph:SetDesc(getUnitInfoText(unitFolder, false, activeUnitDisp))
         else
             unitInfoParagraph:SetDesc("Please select a unit to display info.")
         end
@@ -621,7 +615,7 @@ Tabs.Unit:Toggle({
 })
 
 -- ==========================================
--- [Logic Loop: Auto Queue (Traits & Talents)]
+-- [Logic Loop: Auto Queue (Traits & Talents) Ultimate]
 -- ==========================================
 task.spawn(function()
     while task.wait(0.1) do
@@ -636,8 +630,9 @@ task.spawn(function()
             end
             
             if not activeUnitDisp then
-                local lastUnit = inventoryUnitsMap[customQueue[#customQueue]]
-                unitInfoParagraph:SetDesc(getUnitInfoText(lastUnit, false, true, true))
+                local lastUnitDisp = customQueue[#customQueue]
+                local lastUnit = inventoryUnitsMap[lastUnitDisp]
+                unitInfoParagraph:SetDesc(getUnitInfoText(lastUnit, false, nil))
                 continue
             end
             
@@ -651,11 +646,8 @@ task.spawn(function()
             local isSystemRolling = (autoTraitsEnabled or autoTalentsEnabled)
             
             if not isSystemRolling then
-                unitStates[activeUnitDisp] = "waiting"
-                unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, false, false, false))
+                unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, false, activeUnitDisp))
                 continue
-            else
-                unitStates[activeUnitDisp] = "rolling"
             end
             
             local traitsDone = not autoTraitsEnabled
@@ -663,7 +655,7 @@ task.spawn(function()
             local targetBuffsClean = {}
             local isDataLoading = false
             
-            -- [1] เช็คเงื่อนไข Traits (แม่นยำด้วย Internal Target)
+            -- [1] เช็คเงื่อนไข Traits (เช็คเลข I, II, III อย่างแม่นยำ 100%)
             local priIsGood = false
             local subIsGood = false
             if autoTraitsEnabled and #targetTraits > 0 then
@@ -680,14 +672,12 @@ task.spawn(function()
                     local internal = trait_check[uiTraitName]
                     if internal then internalTargets[internal] = true end
                     
-                    -- หั่นเลขโรมันออกเพื่อใช้ในการส่งล็อค (Lock Array) อย่างปลอดภัย
                     local cleanName = getBaseTraitName(uiTraitName)
                     if not table.find(targetBuffsClean, cleanName) then
                         table.insert(targetBuffsClean, cleanName)
                     end
                 end
                 
-                -- เช็คผลลัพธ์ว่าถึงเป้าหมายที่เลือกไว้เป๊ะๆ หรือไม่
                 if internalTargets[currentPri] then priIsGood = true end
                 if internalTargets[currentSub] then subIsGood = true end
                 
@@ -709,13 +699,7 @@ task.spawn(function()
             
             if autoTalentsEnabled and #targetTalents > 0 then
                 for _, remStatName in pairs(talentUIToRemote) do
-                    local valStr = safeGetNestedVal(activeUnit, "Potentials_Adjustment", remStatName)
-                    if valStr == "N/A" then
-                        if remStatName == "Abilities_DMG" then valStr = safeGetVal(activeUnit, "Ability_Talent")
-                        elseif remStatName == "Critical_Damage" then valStr = safeGetVal(activeUnit, "Critical_Talent")
-                        else valStr = safeGetVal(activeUnit, remStatName .. "_Talent") end
-                    end
-                    
+                    local valStr = getRawStat(activeUnit, remStatName)
                     if valStr == "N/A" then isDataLoading = true end
                     
                     local l, _ = getStatLayoutAndTier(remStatName, valStr)
@@ -730,13 +714,7 @@ task.spawn(function()
                         allTalentsGood = false
                         if not slotToRollTalent then 
                             slotToRollTalent = remStatName
-                            local tVal = safeGetNestedVal(activeUnit, "Potentials_Adjustment", remStatName)
-                            if tVal == "N/A" then
-                                if remStatName == "Abilities_DMG" then tVal = safeGetVal(activeUnit, "Ability_Talent")
-                                elseif remStatName == "Critical_Damage" then tVal = safeGetVal(activeUnit, "Critical_Talent")
-                                else tVal = safeGetVal(activeUnit, remStatName .. "_Talent") end
-                            end
-                            oldValForRoll = tVal
+                            oldValForRoll = getRawStat(activeUnit, remStatName)
                         end
                     end
                 end
@@ -745,27 +723,18 @@ task.spawn(function()
                 talentsDone = true
             end
             
-            -- ป้องกันการส่งคำสั่งสุ่มซ้ำซ้อนขณะเกมกำลังโหลดค่าใหม่
             if isDataLoading then
                 unitInfoParagraph:SetDesc("Loading Unit Data... Please Wait.")
                 continue
             end
             
-            unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, true, traitsDone, talentsDone))
+            unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, true, activeUnitDisp))
             
-            -- [3] ทำงานส่ง Remote 
+            -- [3] ทำงานส่ง Remote สลับคิว
             if traitsDone and talentsDone then
                 unitStates[activeUnitDisp] = "done"
-                unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, false, true, true))
-                task.wait(1) 
-                
-                -- ลบออกจากคิวเพื่อให้สคริปต์สลับไปตัวต่อไปทันที!
-                for i, v in ipairs(customQueue) do
-                    if v == activeUnitDisp then
-                        table.remove(customQueue, i)
-                        break
-                    end
-                end
+                unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, false, activeUnitDisp))
+                task.wait(0.5) 
             else
                 if not traitsDone then
                     local slotToRoll = "Primary"
@@ -801,7 +770,7 @@ end)
 
 
 -- ==========================================
--- [UI Tab : Hide Reroll / Reward]
+-- [UI Tab : Hide Reroll / Reward (คืนค่าได้ 100%)]
 -- ==========================================
 SecGeneral.MiscFeatures:Toggle({
     Title = "Hide Reroll",
@@ -831,6 +800,9 @@ SecGeneral.MiscFeatures:Toggle({
         hideRewardEnabled = s 
         if not s then
             pcall(function()
+                local obs = LP.PlayerGui:FindFirstChild("Obtaind_Visual")
+                if obs and obs:IsA("ScreenGui") then obs.Enabled = true end
+                
                 for _, name in ipairs(rewardNames) do
                     local rew = LP.PlayerGui:FindFirstChild(name)
                     if rew then
@@ -844,7 +816,7 @@ SecGeneral.MiscFeatures:Toggle({
 })
 
 task.spawn(function()
-    while task.wait(0.1) do
+    while task.wait(0.2) do
         if hideRerollEnabled then
             pcall(function()
                 local r1 = LP.PlayerGui:FindFirstChild("Reroll")
@@ -860,6 +832,9 @@ task.spawn(function()
         end
         if hideRewardEnabled then
             pcall(function()
+                local obs = LP.PlayerGui:FindFirstChild("Obtaind_Visual")
+                if obs and obs:IsA("ScreenGui") then obs.Enabled = false end
+                
                 for _, name in ipairs(rewardNames) do
                     local rew = LP.PlayerGui:FindFirstChild(name)
                     if rew then
@@ -882,7 +857,10 @@ local selectedEgg = ""
 local autoSummonEnabled = false
 
 Tabs.Summon:Section({Title = "Summon Settings"})
-
+local summonInfo = Tabs.Summon:Paragraph({
+    Title = "Saved Position Info",
+    Desc = "World : None\nPosition : None"
+})
 dropdowns.SelectEgg = Tabs.Summon:Dropdown({
     Title = "Select Egg",
     Values = eggList,
@@ -890,11 +868,6 @@ dropdowns.SelectEgg = Tabs.Summon:Dropdown({
     Callback = function(v)
         selectedEgg = v
     end
-})
-
-local summonInfo = Tabs.Summon:Paragraph({
-    Title = "Saved Position Info",
-    Desc = "World : None\nPosition : None"
 })
 
 Tabs.Summon:Button({
@@ -986,6 +959,11 @@ task.spawn(function()
 end)
 
 
+-- ==========================================
+-- [ส่วนของ Auto ฟาร์ม และ Damage Boost]
+-- ==========================================
+local attackBuffer = buffer.fromstring("\026\000")
+
 dropdowns.CategoryMode = SecGeneral.AutoFarm:Dropdown({
     Title = "Mon", Values = monsterList, Value = {}, Multi = true, AllowNone = true,
     Callback = function(option) selectedMonsters = option or {} end
@@ -1062,10 +1040,6 @@ SecGeneral.Section_DmgBoost:Input({
     end
 })
 
-local attackBuffer = buffer.fromstring("\026\000")
-local lastAttackTime = 0
-local dmgBoostConnections = {}
-
 local function setAutoAttackState(state)
     pcall(function()
         local pData = RS:FindFirstChild("Players_Data")
@@ -1081,88 +1055,11 @@ local function setAutoAttackState(state)
     end)
 end
 
-local function checkAndAttackAllMonsters()
-    if not dmgBoostEnabled then return end
-    local t = tick()
-    if t - lastAttackTime < 0.05 then return end
-    
-    local myFolder = UnitsServer:FindFirstChild(LP.Name)
-    if not myFolder then return end
-    
-    local hasDebounceTrue = false
-    for _, unit in ipairs(myFolder:GetChildren()) do
-        local debounce = unit:FindFirstChild("Debounce")
-        if debounce and debounce.Value == true then
-            hasDebounceTrue = true
-            break
-        end
-    end
-    
-    if hasDebounceTrue then
-        lastAttackTime = t
-        pcall(function() ByteNetReq:FireServer(attackBuffer) end)
-    end
-end
-
-local function setupDamageBoostForUnit(unit)
-    if dmgBoostConnections[unit] then return end
-    
-    local debounce = unit:WaitForChild("Debounce", 1)
-    if debounce then
-        local conn = debounce:GetPropertyChangedSignal("Value"):Connect(function()
-            if dmgBoostEnabled and debounce.Value == true then
-                checkAndAttackAllMonsters()
-            end
-        end)
-        dmgBoostConnections[unit] = conn
-    end
-end
-
-task.spawn(function()
-    local myFolder = UnitsServer:FindFirstChild(LP.Name)
-    if myFolder then
-        for _, unit in ipairs(myFolder:GetChildren()) do
-            setupDamageBoostForUnit(unit)
-        end
-        myFolder.ChildAdded:Connect(function(child)
-            if dmgBoostEnabled then
-                setupDamageBoostForUnit(child)
-            end
-        end)
-    end
-    
-    UnitsServer.ChildAdded:Connect(function(child)
-        if child.Name == LP.Name and dmgBoostEnabled then
-            for _, unit in ipairs(child:GetChildren()) do
-                setupDamageBoostForUnit(unit)
-            end
-            child.ChildAdded:Connect(function(unit)
-                if dmgBoostEnabled then
-                    setupDamageBoostForUnit(unit)
-                end
-            end)
-        end
-    end)
-end)
-
 SecGeneral.Section_DmgBoost:Toggle({
     Title = "Damage Boost", Value = false,
     Callback = function(state)
         dmgBoostEnabled = state
         setAutoAttackState(state)
-        if state then
-            local myFolder = UnitsServer:FindFirstChild(LP.Name)
-            if myFolder then
-                for _, unit in ipairs(myFolder:GetChildren()) do
-                    setupDamageBoostForUnit(unit)
-                end
-            end
-        else
-            for unit, conn in pairs(dmgBoostConnections) do
-                if conn then conn:Disconnect() end
-            end
-            table.clear(dmgBoostConnections)
-        end
     end
 })
 SecGeneral.Section_DmgBoost:Toggle({
@@ -1184,6 +1081,32 @@ task.spawn(function()
                     end
                 end)
             end
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait() do
+        if dmgBoostEnabled then
+            if not pauseDmgBoost then
+                local myFolder = UnitsServer:FindFirstChild(LP.Name)
+                if myFolder then
+                    local hasDebounceTrue = false
+                    for _, unit in ipairs(myFolder:GetChildren()) do
+                        local db = unit:FindFirstChild("Debounce")
+                        if db and db.Value == true then
+                            hasDebounceTrue = true
+                            break
+                        end
+                    end
+                    if hasDebounceTrue then
+                        pcall(function() ByteNetReq:FireServer(attackBuffer) end)
+                        task.wait(dmgBoostCooldown or 0.08)
+                    end
+                end
+            end
+        else
+            task.wait(0.5)
         end
     end
 end)
@@ -1429,9 +1352,8 @@ task.spawn(function()
         if activeRiftFolder ~= currentRiftFolder then currentRiftFolder = activeRiftFolder; riftStarted = false end
         if activeRaidFolder ~= currentRaidFolder then currentRaidFolder = activeRaidFolder; raidStarted = false end
 
-        -- [ ระบบ Auto Rift สำคัญกว่า Auto Raid ]
+        -- [ ระบบ Auto Rift สำคัญที่สุด: ถ้ามี Rift จะทิ้งทุกอย่างเพื่อไปลง Rift ทันที ]
         if autoRiftEnabled and riftSpawned then
-            -- ถ้ากำลังลง Raid อยู่ ให้ออกจาก Raid ก่อนไปทำ Rift
             if currentlyInRaid then
                 pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
                 task.wait(4)
@@ -1495,7 +1417,6 @@ task.spawn(function()
                     end
 
                     if not isReaperMap then
-                        -- แวะ Lobby ให้ระบบโหลดก่อนไป Reaper Society ป้องกันบัคไม่ยอมเข้าแมพ
                         pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
                         task.wait(2)
                         pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Reaper Society"])) end)
@@ -1614,10 +1535,10 @@ task.spawn(function()
                         collectBoxes(others) 
                     end
                     
-                    -- Robust Exit System: ย้ำคำสั่งออกจนกว่าจะกลับลอบบี้
-                    for i = 1, 5 do
+                    -- [ระบบ Force Exit Raid บังคับออกให้หลุดจากด่าน]
+                    for i = 1, 10 do
                         pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
-                        task.wait(2.5)
+                        task.wait(2)
                         local curSt = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name) and RS.Players_Data[LP.Name]:FindFirstChild("Data") and RS.Players_Data[LP.Name].Data:FindFirstChild("OnStage")
                         if curSt and curSt.Value == "Lobby" then break end
                     end
