@@ -4,7 +4,7 @@ if isPremium == nil or hwid == nil then
     game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack")
     return
 end
-print("✅ Enchant Hub Loaded! [Hyper-Optimized Combat Edition]")
+print("✅ Enchant Hub Loaded! [Ultimate Precision & Clean Combat Edition]")
 print("🔑 Premium Status: " .. tostring(isPremium))
 
 repeat task.wait() until game:IsLoaded()
@@ -35,7 +35,7 @@ local hideRerollEnabled, hideRewardEnabled = false, false
 local rewardNames = {"Reward", "Rewards", "RewardUI", "RewardsUI", "Reward_Visuals", "Rewards_Visuals", "Drops", "Drop"}
 
 -- ==========================================
--- [ 🧠 ระบบ SmartWait ขั้นสูงสุด ]
+-- [ 🧠 ระบบ SmartWait ขั้นสูงสุด (ทนปิง ทนแลค) ]
 -- ==========================================
 local function SmartWait(conditionFunc, timeout)
     local timeoutLimit = timeout or 5.0
@@ -57,7 +57,7 @@ LP.Idled:Connect(function()
 end)
 
 -- ==========================================
--- [ ระบบ Spoof Name ]
+-- [ ระบบ Spoof Name แบบไล่สี (Gradient) ]
 -- ==========================================
 local function applySpoofName(char)
     if not char then return end
@@ -88,8 +88,10 @@ local function applySpoofName(char)
 
         local disp = overheads:FindFirstChild("DisplayNames")
         if disp and disp:IsA("TextLabel") then disp.Text = "Enchant Hub" end
+
         local names = overheads:FindFirstChild("Names")
         if names and names:IsA("TextLabel") then names.Text = "discord.gg/jUeYgfrrPC" end
+
         local title = overheads:FindFirstChild("Title")
         if title and title:IsA("TextLabel") then title.Text = "by xchant" end
     end)
@@ -109,7 +111,7 @@ local mapBuffers = {
     ["Reaper Society"]    = "\004\014\000Reaper Society"
 }
 
--- [ Data Tables ]
+-- [ Data Tables สำหรับ Traits และ Talents ]
 local trait_check = {
     ["Assault I"]="Assault_1",["Assault II"]="Assault_2",["Assault III"]="Assault_3",
     ["Genius I"]="Genius_1",  ["Genius II"]="Genius_2",  ["Genius III"]="Genius_3",
@@ -266,7 +268,7 @@ local SecGeneral = {
     MiscFeatures     = Tabs.Misc:Section({Title = "Features", Opened = true}),
 }
 
--- [ระบบ Fast Rerolls]
+-- [ระบบ Fast Rerolls ใน Premium]
 local fastRerollEnabled = false
 SecGeneral.SecPremiumMisc:Toggle({
     Title = "Fast Reroll",
@@ -325,6 +327,7 @@ local function tweenToPosition(targetPos)
     return tween
 end
 
+-- 🧠 [Smart Teleport ขับเคลื่อนด้วย SmartWait]
 local function smartTeleport(targetMapName)
     local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
     if not myData then return false end
@@ -562,18 +565,21 @@ dropdowns.SelectInventoryUnits = Tabs.Unit:Dropdown({
     AllowNone = true,
     Callback = function(opts)
         local selectedOpts = opts or {}
+        
         for i = #customQueue, 1, -1 do
             if not table.find(selectedOpts, customQueue[i]) then
                 unitStates[customQueue[i]] = nil
                 table.remove(customQueue, i)
             end
         end
+        
         for _, o in ipairs(selectedOpts) do
             if not table.find(customQueue, o) then
                 table.insert(customQueue, o)
                 unitStates[o] = "waiting"
             end
         end
+        
         if #customQueue > 0 then
             local activeUnitDisp = customQueue[1]
             for _, un in ipairs(customQueue) do
@@ -669,7 +675,7 @@ task.spawn(function()
             local isDataLoading = false
             
             -- ===================================
-            -- [1] เช็คเงื่อนไข Traits (แม่นยำ ห้ามซ้ำ)
+            -- [1] เช็คเงื่อนไข Traits (แม่นยำ ห้ามซ้ำ ส่งแบบดิบเป๊ะๆ)
             -- ===================================
             local priIsGood = false
             local subIsGood = false
@@ -824,6 +830,7 @@ SecGeneral.MiscFeatures:Toggle({
             pcall(function()
                 local r1 = LP.PlayerGui:FindFirstChild("Reroll")
                 if r1 and r1:IsA("ScreenGui") then r1.Enabled = true end
+                
                 local r2 = LP.PlayerGui:FindFirstChild("Rerolls_Visuals")
                 if r2 then 
                     if r2:IsA("ScreenGui") then r2.Enabled = true end
@@ -844,6 +851,7 @@ SecGeneral.MiscFeatures:Toggle({
             pcall(function()
                 local obs = LP.PlayerGui:FindFirstChild("Obtaind_Visual")
                 if obs and obs:IsA("ScreenGui") then obs.Enabled = true end
+                
                 for _, name in ipairs(rewardNames) do
                     local rew = LP.PlayerGui:FindFirstChild(name)
                     if rew then
@@ -862,6 +870,7 @@ task.spawn(function()
             pcall(function()
                 local r1 = LP.PlayerGui:FindFirstChild("Reroll")
                 if r1 and r1:IsA("ScreenGui") then r1.Enabled = false end
+                
                 local r2 = LP.PlayerGui:FindFirstChild("Rerolls_Visuals")
                 if r2 then 
                     if r2:IsA("ScreenGui") then r2.Enabled = false end
@@ -874,6 +883,7 @@ task.spawn(function()
             pcall(function()
                 local obs = LP.PlayerGui:FindFirstChild("Obtaind_Visual")
                 if obs and obs:IsA("ScreenGui") then obs.Enabled = false end
+                
                 for _, name in ipairs(rewardNames) do
                     local rew = LP.PlayerGui:FindFirstChild(name)
                     if rew then
@@ -1001,7 +1011,7 @@ SecGeneral.AutoFarm:Button({
 })
 SecGeneral.AutoFarm:Toggle({Title = "Auto Farm Selected", Value = false, Callback = function(s) autoFarmEnabled = s end})
 
--- 🖱️ [ ระบบ Auto Click ธรรมดา ไม่ไปกวนระบบ Remote ]
+-- 🖱️ [ ระบบ Auto Click ขาวสะอาดปราศจากบัค Buffer ทับซ้อน 100% ]
 SecGeneral.AutoFarm:Toggle({Title = "Auto Click", Value = false, Callback = function(s) autoClickEnabled = s end})
 task.spawn(function()
     while task.wait(0.1) do
@@ -1127,7 +1137,7 @@ task.spawn(function()
     end
 end)
 
--- 🗡️ [Ultimate Master Loop for Damage Boost]
+-- 🗡️ [Ultimate Master Loop for Damage Boost: ห้ามแอบตี 1,000,000%]
 task.spawn(function()
     while true do
         if dmgBoostEnabled and isPremium then
@@ -1164,9 +1174,7 @@ end)
 local function collectBoxes(others, checkFunc)
     if not others then return end
     local rewardsFolder = others:FindFirstChild("Rewards")
-    if not rewardsFolder then
-        rewardsFolder = others:FindFirstChild("Rewards", true)
-    end
+    if not rewardsFolder then rewardsFolder = others:FindFirstChild("Rewards", true) end
     if not rewardsFolder then return end
 
     SmartWait(function()
@@ -1303,7 +1311,7 @@ local function getNearestMonsterInList()
     return targetMon
 end
 
--- ⚔️ [สุดยอดการโจมตี: วาร์ปก่อน -> เช็คระยะทีหลัง -> ส่งโจมตี 1 นัด (มี Smart Retry)]
+-- ⚔️ [การโจมตีแบบปลอดภัย: วาร์ปเข้ากลางตัวมอนตรงๆ ไร้ขยะ Remote ปลอม]
 local function attackMonster(targetMon, enabledCheckFunc)
     local activeTween = nil
     local lastReqTime = 0
@@ -1321,39 +1329,38 @@ local function attackMonster(targetMon, enabledCheckFunc)
             if bpTool then hum:EquipTool(bpTool) end
         end
         
-        -- 1. วาร์ปไปหาเป้าหมายก่อน
+        -- 1. วาร์ปเข้าหากลางเป้าหมายตรงๆ (Zero Offset)
         local targetPos = targetMon.HRP.Position
-        local destPos = targetPos + Vector3.new(0, 6, 0)
+        local destPos = targetPos
+        local attackDist = (pHRP.Position - targetPos).Magnitude
         
-        if farmMode == "Tp" then
+        if attackDist > 5 then
+            if farmMode == "Tp" then
+                if activeTween then activeTween:Cancel(); activeTween = nil end
+                teleportToPosition(destPos, true)
+            elseif farmMode == "Tween" then
+                if not activeTween or activeTween.PlaybackState ~= Enum.PlaybackState.Playing then
+                    if activeTween then activeTween:Cancel() end
+                    activeTween = tweenToPosition(destPos)
+                end
+            end
+        else
             if activeTween then activeTween:Cancel(); activeTween = nil end
-            teleportToPosition(destPos, true)
-        elseif farmMode == "Tween" then
-            if not activeTween or activeTween.PlaybackState ~= Enum.PlaybackState.Playing then
-                if activeTween then activeTween:Cancel() end
-                activeTween = tweenToPosition(destPos)
-            end
         end
         
-        -- 2. เช็คระยะการโจมตีหลังจากวาร์ป
-        local currentDist = (pHRP.Position - targetPos).Magnitude
-        
-        -- 3. ถ้าอยู่ในระยะ และ "ไม่ได้เปิด Damage Boost" จะส่ง Request Attack
-        if currentDist <= 40 and not dmgBoostEnabled then
-            if os.clock() - lastReqTime >= 0.05 then -- รัวและแม่นยำ (20 CPS) เพื่อให้ทันเน็ตตก
-                task.spawn(function()
-                    local success = pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
-                    if not success then
-                        -- Retry ทันทีถ้าล้มเหลว
-                        pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
-                    end
-                end)
+        -- 2. เช็คระยะย้ำหลังวาร์ป และส่ง Request โจมตี 1 ครั้งแบบควบคุมได้ (กันบัคแครช)
+        if attackDist <= 35 and not dmgBoostEnabled then
+            if os.clock() - lastReqTime >= 0.15 then 
                 lastReqTime = os.clock()
+                local success, err = pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+                if not success then
+                    -- Smart Retry: ถ้ายิงไม่เข้าเวิร์ฟเวอร์ จะยิงซ้ำทันที
+                    task.wait(0.05)
+                    pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+                end
             end
         end
-        
-        -- หมุนลูปตามเฟรมเรตคอมพิวเตอร์ เพื่อความสมูทที่สุด ไม่มีดีเลย์ขยะ
-        task.wait()
+        task.wait() -- ทำงานลื่นไหลตามเฟรมเรตคอม
     end
     if activeTween then activeTween:Cancel() end
 end
@@ -1532,9 +1539,9 @@ task.spawn(function()
                         for i = 1, 10 do
                             pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer("Leave") end)
                             pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
+                            task.wait(1.0)
                             local curSt = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name) and RS.Players_Data[LP.Name]:FindFirstChild("Data") and RS.Players_Data[LP.Name].Data:FindFirstChild("OnStage")
                             if curSt and curSt.Value == "Lobby" then break end
-                            task.wait(1.0)
                         end
                     end)
                     
