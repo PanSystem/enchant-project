@@ -1,10 +1,9 @@
 local isPremium, allowedGameIds, hwid = ...
-
 if isPremium == nil or hwid == nil then
     game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack")
     return
 end
-print("✅ Enchant Hub Loaded! version 0.1.2")
+print("✅ Enchant Hub Loaded! [Ultimate Edition]")
 print("🔑 Premium Status: " .. tostring(isPremium))
 
 repeat task.wait() until game:IsLoaded()
@@ -35,7 +34,20 @@ local hideRerollEnabled, hideRewardEnabled = false, false
 local rewardNames = {"Reward", "Rewards", "RewardUI", "RewardsUI", "Reward_Visuals", "Rewards_Visuals", "Drops", "Drop"}
 
 -- ==========================================
--- [ ระบบ Anti AFK (ป้องกันการโดนเตะเมื่ออยู่นิ่งนานๆ) ]
+-- [ 🧠 ระบบ SmartWait (ทำงานรวดเร็วตาม Ping/FPS) ]
+-- ==========================================
+local function SmartWait(conditionFunc, timeout)
+    local timeoutLimit = timeout or 5.0
+    local timeElapsed = 0
+    while timeElapsed < timeoutLimit do
+        if conditionFunc() then return true end
+        timeElapsed = timeElapsed + task.wait()
+    end
+    return false
+end
+
+-- ==========================================
+-- [ ระบบ Anti AFK ]
 -- ==========================================
 local VirtualUser = game:GetService("VirtualUser")
 LP.Idled:Connect(function()
@@ -147,6 +159,7 @@ local talentUIToRemote = {
     ["Critical"] = "Critical_Damage",
     ["Speed"] = "Speed"
 }
+local allTalentKeys = {"Damage", "Abilities_DMG", "Critical_Damage", "Speed"}
 
 -- สร้าง Lookup table สำหรับเช็ค Talents แบบแม่นยำสูงสุด
 local tVL = {}
@@ -221,7 +234,7 @@ local Window = WindUI:CreateWindow({
     Transparent  = true,
 })
 Window:CreateTopbarButton("DiscordButton", "message-circle-more", function() end, 990)
-Window:EditOpenButton({Title = "Open Enchant Hub",Icon = "monitor",CornerRadius = UDim.new(0,4),OnlyMobile = false,Enabled = true,Draggable = true,})
+
 local SecTab = {
     PremiumTabSection = Window:Section({Title = "Premium", Icon = "banknote-arrow-up", Opened = false}),
     MainTabSection    = Window:Section({Title = "General", Icon = "house",             Opened = false}),
@@ -261,13 +274,16 @@ SecGeneral.SecPremiumMisc:Toggle({
     Title = "Fast Reroll",
     Value = false,
     Callback = function(s) 
-        if s and not isPremium then return end
+        if s and not isPremium then 
+            fastRerollEnabled = false
+            return 
+        end
         fastRerollEnabled = s 
     end
 })
 task.spawn(function()
     while task.wait(0.05) do
-        if fastRerollEnabled then
+        if fastRerollEnabled and isPremium then
             pcall(function()
                 local rerollUI = LP.PlayerGui:FindFirstChild("Rerolls_Visuals") and LP.PlayerGui.Rerolls_Visuals:FindFirstChild("Rerolls")
                 local gamepassVal = RS:FindFirstChild("Players_Data") 
@@ -314,7 +330,7 @@ local function tweenToPosition(targetPos)
     return tween
 end
 
--- [ฟังก์ชัน Smart Teleport: รับประกันการย้ายเซิร์ฟเวอร์แบบสมบูรณ์]
+-- 🧠 [Smart Teleport แบบไดนามิก]
 local function smartTeleport(targetMapName)
     local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
     if not myData then return false end
@@ -323,10 +339,13 @@ local function smartTeleport(targetMapName)
     if onStage and onStage.Value == targetMapName then return true end
 
     if mapBuffers[targetMapName] then
-        for i = 1, 15 do
-            if onStage.Value == targetMapName then return true end
+        local attemptTime = os.clock()
+        while os.clock() - attemptTime < 15 do
             pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers[targetMapName])) end)
-            task.wait(1.5)
+            local success = SmartWait(function()
+                return onStage and onStage.Value == targetMapName
+            end, 2.0)
+            if success then return true end
         end
     end
     return false
@@ -342,6 +361,7 @@ local function getMapFromEgg(eggName)
             return mapName
         end
     end
+    
     if string.find(lowerEgg, "namex") then return "Namex Planet" end
     if string.find(lowerEgg, "colosseum") then return "Colosseum Kingdom" end
     if string.find(lowerEgg, "demon") then return "Demon Forest" end
@@ -446,47 +466,26 @@ local function getRawStat(unitFolder, statName)
 end
 
 local function waitTalentChange(unitFolder, statName, oldVal, timeout)
-    local dl = os.clock() + (timeout or 2.0)
-    while os.clock() < dl do
+    return SmartWait(function()
         local newVal = getRawStat(unitFolder, statName)
-        if newVal ~= "N/A" and newVal ~= oldVal then
-            return true 
-        end
-        task.wait(0.05)
-    end
-    return false
+        return newVal ~= "N/A" and newVal ~= oldVal
+    end, timeout or 3.0)
 end
 
 local function waitTraitChange(unitFolder, slotToRoll, oldVal, timeout)
-    local dl = os.clock() + (timeout or 2.0)
     local traitNode = slotToRoll == "Primary" and "Primary" or "Sub"
     local legacyNode = slotToRoll == "Primary" and "Primary_Trait" or "Sub_Trait"
-    
-    while os.clock() < dl do
+    return SmartWait(function()
         local newVal = safeGetNestedVal(unitFolder, "Traits", traitNode)
         if newVal == "N/A" then newVal = safeGetVal(unitFolder, legacyNode) end
-        
-        if newVal ~= "N/A" and newVal ~= oldVal then
-            return true
-        end
-        task.wait(0.05)
-    end
-    return false
+        return newVal ~= "N/A" and newVal ~= oldVal
+    end, timeout or 3.0)
 end
 
--- ฟังก์ชันตัดเลขโรมันออกเพื่อใช้ในการสร้าง Lock Array ส่งไปให้เกม
-local function getBaseTraitName(name)
-    local b = string.match(name, "^(.-)%s+III$") or string.match(name, "^(.-)%s+II$") or string.match(name, "^(.-)%s+I$")
-    return b or name
-end
-
--- ฟังก์ชันหาว่า Internal Name นี้ ตรงกับ UI Name อันไหน
 local function getUiNameFromInternal(internalName)
     if not internalName or internalName == "N/A" then return nil end
     for uiName, inName in pairs(trait_check) do
-        if inName == internalName then
-            return uiName
-        end
+        if inName == internalName then return uiName end
     end
     return nil
 end
@@ -580,14 +579,13 @@ dropdowns.SelectInventoryUnits = Tabs.Unit:Dropdown({
     Callback = function(opts)
         local selectedOpts = opts or {}
         
-        -- ลบตัวที่เอาติ๊กออก
         for i = #customQueue, 1, -1 do
             if not table.find(selectedOpts, customQueue[i]) then
                 unitStates[customQueue[i]] = nil
                 table.remove(customQueue, i)
             end
         end
-        -- เพิ่มตัวใหม่
+        
         for _, o in ipairs(selectedOpts) do
             if not table.find(customQueue, o) then
                 table.insert(customQueue, o)
@@ -648,7 +646,7 @@ Tabs.Unit:Toggle({
 })
 
 -- ==========================================
--- [Logic Loop: Auto Queue (Traits & Talents) Ultimate Perfection]
+-- [Logic Loop: Auto Queue (Traits & Talents) Ultimate]
 -- ==========================================
 task.spawn(function()
     while task.wait(0.1) do
@@ -692,7 +690,7 @@ task.spawn(function()
             local isDataLoading = false
             
             -- ===================================
-            -- [1] เช็คเงื่อนไข Traits (แม่นยำและห้ามซ้ำ)
+            -- [1] เช็คเงื่อนไข Traits (แม่นยำและห้ามซ้ำ ส่งแบบดิบเป๊ะๆ)
             -- ===================================
             local priIsGood = false
             local subIsGood = false
@@ -717,18 +715,17 @@ task.spawn(function()
                 if internalTargets[currentSub] then subIsGood = true end
                 
                 if #targetTraits == 1 then
-                    -- กรณีเลือก 1 บัฟ: ต้องได้บัฟนี้ทั้ง 2 ช่อง (Primary และ Sub)
+                    -- เลือก 1 บัฟ : ต้องได้เหมือนกันทั้ง 2 ช่อง
                     if priIsGood and subIsGood and currentPri == currentSub then
                         traitsDone = true
                     else
                         traitsDone = false
                     end
                 else
-                    -- กรณีเลือก >= 2 บัฟ: ต้องได้บัฟเป้าหมาย และต้องห้ามซ้ำกัน
+                    -- เลือกหลายบัฟ : ต้องได้เป้าหมาย และ ห้ามซ้ำกัน
                     if priIsGood and subIsGood then
                         if currentPri == currentSub then
-                            -- ถ้าบัฟซ้ำกัน มองว่า Sub ไม่ผ่าน เพื่อบังคับให้สุ่ม Sub ทิ้ง
-                            subIsGood = false 
+                            subIsGood = false -- ถ้าซ้ำกัน บังคับสุ่ม Sub ทิ้ง!
                             traitsDone = false
                         else
                             traitsDone = true
@@ -738,11 +735,10 @@ task.spawn(function()
                     end
                 end
                 
-                -- สร้างเป้าหมายส่ง Remote (Array ล็อคบัฟ)
+                -- สร้างเป้าหมายส่ง Remote (ส่งชื่อที่มีเลขโรมันเข้าไปตรงๆ แบบออริจินัล)
                 if not traitsDone and not isDataLoading then
                     if priIsGood then slotToRoll = "Sub" end
                     
-                    -- หาว่าอีกช่องมีบัฟอะไรอยู่แล้ว เพื่อจะได้ไม่ล็อคบัฟซ้ำเข้าไปใน Array ของการสุ่ม
                     local uiNameOfGoodSlot = nil
                     if slotToRoll == "Sub" and priIsGood then
                         uiNameOfGoodSlot = getUiNameFromInternal(currentPri)
@@ -751,17 +747,15 @@ task.spawn(function()
                     end
 
                     for _, uiTraitName in ipairs(targetTraits) do
-                        local cleanName = getBaseTraitName(uiTraitName)
-
                         if #targetTraits == 1 then
-                            if not table.find(targetBuffsClean, cleanName) then
-                                table.insert(targetBuffsClean, cleanName)
+                            if not table.find(targetBuffsClean, uiTraitName) then
+                                table.insert(targetBuffsClean, uiTraitName)
                             end
                         else
-                            -- ใส่บัฟทั้งหมดลงไป ยกเว้นบัฟที่ได้ไปแล้วในอีกช่อง (ป้องกันการสุ่มซ้ำเป้าหมายเดิม)
+                            -- ตัดบัฟที่ได้ไปแล้วในอีกช่องออกจากการล็อก เพื่อไม่ให้มันสุ่มได้ของเดิมซ้ำ
                             if uiNameOfGoodSlot ~= uiTraitName then
-                                if not table.find(targetBuffsClean, cleanName) then
-                                    table.insert(targetBuffsClean, cleanName)
+                                if not table.find(targetBuffsClean, uiTraitName) then
+                                    table.insert(targetBuffsClean, uiTraitName)
                                 end
                             end
                         end
@@ -772,7 +766,7 @@ task.spawn(function()
             end
             
             -- ===================================
-            -- [2] เช็คเงื่อนไข Talents
+            -- [2] เช็คเงื่อนไข Talents (อัปเกรด Once/Specific)
             -- ===================================
             local targetLayout = talent_check[targetTalentTier] and talent_check[targetTalentTier].layout or 0
             local highestCurrentLayout = 0
@@ -781,23 +775,26 @@ task.spawn(function()
             local oldValForRoll = nil
             
             if autoTalentsEnabled and #targetTalents > 0 then
-                for _, remStatName in pairs(talentUIToRemote) do
-                    local valStr = getRawStat(activeUnit, remStatName)
+                -- หา highestCurrentLayout จาก "สเตตัสทั้งหมด 4 ช่อง"
+                for _, rStat in ipairs(allTalentKeys) do
+                    local valStr = getRawStat(activeUnit, rStat)
                     if valStr == "N/A" then isDataLoading = true end
-                    
-                    local l, _ = getStatLayoutAndTier(remStatName, valStr)
-                    statsLayouts[remStatName] = l
+                    local l, _ = getStatLayoutAndTier(rStat, valStr)
                     if l > highestCurrentLayout then highestCurrentLayout = l end
                 end
-                
+
                 local allTalentsGood = true
+                -- ตรวจสอบเฉพาะช่องเป้าหมายที่เราเลือก
                 for _, uiTalent in ipairs(targetTalents) do
                     local remStatName = talentUIToRemote[uiTalent]
-                    if statsLayouts[remStatName] < targetLayout then
+                    local valStrTarget = getRawStat(activeUnit, remStatName)
+                    local lTarget, _ = getStatLayoutAndTier(remStatName, valStrTarget)
+                    
+                    if lTarget < targetLayout then
                         allTalentsGood = false
                         if not slotToRollTalent then 
                             slotToRollTalent = remStatName
-                            oldValForRoll = getRawStat(activeUnit, remStatName)
+                            oldValForRoll = valStrTarget
                         end
                     end
                 end
@@ -806,7 +803,6 @@ task.spawn(function()
                 talentsDone = true
             end
             
-            -- ป้องกันการส่งคำสั่งสุ่มซ้ำซ้อนขณะเกมกำลังโหลดค่าใหม่
             if isDataLoading then
                 unitInfoParagraph:SetDesc("Loading Unit Data... Please Wait.")
                 continue
@@ -815,12 +811,12 @@ task.spawn(function()
             unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, true, activeUnitDisp, traitsDone, talentsDone))
             
             -- ===================================
-            -- [3] ทำงานส่ง Remote สลับคิว
+            -- [3] ทำงานส่ง Remote สลับคิวแบบฉลาด
             -- ===================================
             if traitsDone and talentsDone then
                 unitStates[activeUnitDisp] = "done"
                 unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, false, activeUnitDisp, true, true))
-                task.wait(0.5) 
+                task.wait(1) 
             else
                 if not traitsDone then
                     local oldTraitVal = slotToRoll == "Primary" and safeGetNestedVal(activeUnit, "Traits", "Primary") or safeGetNestedVal(activeUnit, "Traits", "Sub")
@@ -831,19 +827,21 @@ task.spawn(function()
                     pcall(function()
                         RS:WaitForChild("Remotes"):WaitForChild("Gamblings"):WaitForChild("Traits"):FireServer(activeUnit.Name, slotToRoll, targetBuffsClean, false)
                     end)
-                    waitTraitChange(activeUnit, slotToRoll, oldTraitVal, 2.0)
+                    waitTraitChange(activeUnit, slotToRoll, oldTraitVal, 3.0)
                     
                 elseif not talentsDone then
                     if highestCurrentLayout < 16 then
+                        -- ถ้าไม่มี SSS เลย ให้สุ่ม "Once" ทั้งแผง
                         pcall(function()
                             RS:WaitForChild("Remotes"):WaitForChild("Systems"):WaitForChild("Potentials_Rolling"):FireServer(activeUnit.Name, "Reroll", "Once")
                         end)
                         task.wait(0.5)
                     elseif slotToRollTalent then
+                        -- ถ้ามี SSS แล้ว ล็อคเป้าสุ่มแค่ช่องนั้นช่องเดียว!
                         pcall(function()
                             RS:WaitForChild("Remotes"):WaitForChild("Systems"):WaitForChild("Potentials_Rolling"):FireServer(activeUnit.Name, "Reroll", slotToRollTalent)
                         end)
-                        waitTalentChange(activeUnit, slotToRollTalent, oldValForRoll, 2.0)
+                        waitTalentChange(activeUnit, slotToRollTalent, oldValForRoll, 3.0)
                     end
                 end
             end
@@ -1010,7 +1008,9 @@ task.spawn(function()
             local currentStage = myData and myData:FindFirstChild("Data") and myData.Data:FindFirstChild("OnStage") and myData.Data.OnStage.Value or ""
 
             if targetWorld and targetWorld ~= "" and currentStage ~= targetWorld then
-                if not smartTeleport(targetWorld) then task.wait(1) end
+                if mapBuffers[targetWorld] then
+                    smartTeleport(targetWorld)
+                end
                 continue
             end
 
@@ -1041,6 +1041,9 @@ task.spawn(function()
 end)
 
 
+-- ==========================================
+-- [ ฟาร์ม และ Damage Boost ]
+-- ==========================================
 dropdowns.CategoryMode = SecGeneral.AutoFarm:Dropdown({
     Title = "Mon", Values = monsterList, Value = {}, Multi = true, AllowNone = true,
     Callback = function(option) selectedMonsters = option or {} end
@@ -1118,8 +1121,6 @@ SecGeneral.Section_DmgBoost:Input({
 })
 
 local attackBuffer = buffer.fromstring("\026\000")
-local lastAttackTime = 0
-local dmgBoostConnections = {}
 
 local function setAutoAttackState(state)
     pcall(function()
@@ -1136,88 +1137,16 @@ local function setAutoAttackState(state)
     end)
 end
 
-local function checkAndAttackAllMonsters()
-    if not dmgBoostEnabled then return end
-    local t = tick()
-    if t - lastAttackTime < (dmgBoostCooldown or 0.05) then return end
-    
-    local myFolder = UnitsServer:FindFirstChild(LP.Name)
-    if not myFolder then return end
-    
-    local hasDebounceTrue = false
-    for _, unit in ipairs(myFolder:GetChildren()) do
-        local debounce = unit:FindFirstChild("Debounce")
-        if debounce and debounce.Value == true then
-            hasDebounceTrue = true
-            break
-        end
-    end
-    
-    if hasDebounceTrue then
-        lastAttackTime = t
-        pcall(function() ByteNetReq:FireServer(attackBuffer) end)
-    end
-end
-
-local function setupDamageBoostForUnit(unit)
-    if dmgBoostConnections[unit] then return end
-    
-    local debounce = unit:WaitForChild("Debounce", 1)
-    if debounce then
-        local conn = debounce:GetPropertyChangedSignal("Value"):Connect(function()
-            if dmgBoostEnabled and debounce.Value == true then
-                checkAndAttackAllMonsters()
-            end
-        end)
-        dmgBoostConnections[unit] = conn
-    end
-end
-
-task.spawn(function()
-    local myFolder = UnitsServer:FindFirstChild(LP.Name)
-    if myFolder then
-        for _, unit in ipairs(myFolder:GetChildren()) do
-            setupDamageBoostForUnit(unit)
-        end
-        myFolder.ChildAdded:Connect(function(child)
-            if dmgBoostEnabled then
-                setupDamageBoostForUnit(child)
-            end
-        end)
-    end
-    
-    UnitsServer.ChildAdded:Connect(function(child)
-        if child.Name == LP.Name and dmgBoostEnabled then
-            for _, unit in ipairs(child:GetChildren()) do
-                setupDamageBoostForUnit(unit)
-            end
-            child.ChildAdded:Connect(function(unit)
-                if dmgBoostEnabled then
-                    setupDamageBoostForUnit(unit)
-                end
-            end)
-        end
-    end)
-end)
-
+-- 🔒 [ล็อคฟังก์ชัน Damage Boost ขั้นเด็ดขาด]
 SecGeneral.Section_DmgBoost:Toggle({
     Title = "Damage Boost", Value = false,
     Callback = function(state)
+        if state and not isPremium then 
+            dmgBoostEnabled = false
+            return 
+        end
         dmgBoostEnabled = state
         setAutoAttackState(state)
-        if state then
-            local myFolder = UnitsServer:FindFirstChild(LP.Name)
-            if myFolder then
-                for _, unit in ipairs(myFolder:GetChildren()) do
-                    setupDamageBoostForUnit(unit)
-                end
-            end
-        else
-            for unit, conn in pairs(dmgBoostConnections) do
-                if conn then conn:Disconnect() end
-            end
-            table.clear(dmgBoostConnections)
-        end
     end
 })
 SecGeneral.Section_DmgBoost:Toggle({
@@ -1228,7 +1157,7 @@ SecGeneral.Section_DmgBoost:Toggle({
 local unpauseTime = 0
 task.spawn(function()
     while task.wait(0.1) do
-        if dmgBoostEnabled and safeDmgBoostEnabled then
+        if dmgBoostEnabled and safeDmgBoostEnabled and isPremium then
             if pauseDmgBoost then
                 if tick() >= unpauseTime then pauseDmgBoost = false end
             else
@@ -1239,6 +1168,46 @@ task.spawn(function()
                     end
                 end)
             end
+        elseif not safeDmgBoostEnabled then
+            pauseDmgBoost = false
+        end
+    end
+end)
+
+-- 🗡️ [Ultimate Master Loop for Damage Boost: ห้ามแอบตี 1,000,000%]
+task.spawn(function()
+    while true do
+        if dmgBoostEnabled and isPremium then
+            if pauseDmgBoost then
+                task.wait(0.1)
+            else
+                local shouldAttack = false
+                local myFolder = UnitsServer:FindFirstChild(LP.Name)
+                if myFolder then
+                    for _, unit in ipairs(myFolder:GetChildren()) do
+                        local db = unit:FindFirstChild("Debounce")
+                        if db and db.Value == true then
+                            shouldAttack = true
+                            break
+                        end
+                    end
+                end
+                
+                if shouldAttack then
+                    pcall(function() ByteNetReq:FireServer(attackBuffer) end)
+                    local cd = tonumber(dmgBoostCooldown) or 0.08
+                    if cd > 0 then
+                        task.wait(cd)
+                    else
+                        task.wait()
+                    end
+                else
+                    task.wait(0.05)
+                end
+            end
+        else
+            -- 🛑 ถ้ายกเลิก Toggle หรือไม่ใช่ Premium สคริปต์จะหยุดยิง Remote ถาวรตรงนี้
+            task.wait(0.2) 
         end
     end
 end)
@@ -1250,6 +1219,7 @@ task.spawn(function()
     end
 end)
 
+-- 🧠 [SmartWait for Boxes - เก็บกล่องและออกด่านรวดเร็ว]
 local function collectBoxes(others, checkFunc)
     if not others then return end
     local rewardsFolder = others:FindFirstChild("Rewards")
@@ -1258,12 +1228,12 @@ local function collectBoxes(others, checkFunc)
     end
     if not rewardsFolder then return end
 
-    local waitDl = os.clock() + 5.0
-    while os.clock() < waitDl do
-        if checkFunc and not checkFunc() then return end
-        if #rewardsFolder:GetChildren() > 0 then break end
-        task.wait(0.1)
-    end
+    -- รอจนกว่ากล่องจะเกิด
+    SmartWait(function()
+        if checkFunc and not checkFunc() then return true end
+        return #rewardsFolder:GetChildren() > 0
+    end, 5.0)
+
     if #rewardsFolder:GetChildren() == 0 then return end
 
     local function findActivePrompt(model)
@@ -1296,23 +1266,24 @@ local function collectBoxes(others, checkFunc)
                 pHRP.AssemblyAngularVelocity = Vector3.zero
                 pHRP.CFrame = CFrame.new(targetPos)
             end
-            local fireDl = os.clock() + 3.0
-            while os.clock() < fireDl do
-                if checkFunc and not checkFunc() then return end
-                if not prm or not prm.Parent or not prm.Enabled then break end
-                if not box.Parent then break end
-                pHRP = LP.Character and (LP.Character:FindFirstChild("HumanoidRootPart") or LP.Character:FindFirstChild("Torso"))
-                if pHRP then
-                    local dv = pHRP.Position - part.Position
+            
+            SmartWait(function()
+                if checkFunc and not checkFunc() then return true end
+                if not prm or not prm.Parent or not prm.Enabled then return true end
+                if not box.Parent then return true end
+                
+                local pHRP_in = LP.Character and (LP.Character:FindFirstChild("HumanoidRootPart") or LP.Character:FindFirstChild("Torso"))
+                if pHRP_in then
+                    local dv = pHRP_in.Position - part.Position
                     if dv.X*dv.X + dv.Y*dv.Y + dv.Z*dv.Z > 9 then
-                        pHRP.AssemblyLinearVelocity = Vector3.zero
-                        pHRP.AssemblyAngularVelocity = Vector3.zero
-                        pHRP.CFrame = CFrame.new(targetPos)
+                        pHRP_in.AssemblyLinearVelocity = Vector3.zero
+                        pHRP_in.AssemblyAngularVelocity = Vector3.zero
+                        pHRP_in.CFrame = CFrame.new(targetPos)
                     end
                 end
                 pcall(function() fireproximityprompt(prm, 1, true) end)
-                task.wait(0.05)
-            end
+                return false
+            end, 3.0)
         end
         if not anyActive then break end
         task.wait(0.05)
@@ -1337,7 +1308,7 @@ local function getPriorityCheck()
     local raidsVisual = workspace:FindFirstChild("Raids_Visual")
     if raidsVisual then
         for _, f in ipairs(raidsVisual:GetChildren()) do
-            if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_" .. LP.Name) or string.find(f.Name, "Clients_" .. LP.Name)) then
+            if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_" .. LP.Name) or string.match(f.Name, "Clients_" .. LP.Name)) then
                 currentlyInRaid = true; break
             end
         end
@@ -1448,11 +1419,14 @@ local function attackMonster(targetMon, enabledCheckFunc)
         if attackDist <= 35 then
             pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
         end
-        task.wait(0.1)
+        task.wait(0.05)
     end
     if activeTween then activeTween:Cancel() end
 end
 
+-- ==========================================
+-- [ Event Loops (Raid, Rift, Village, Farm) ]
+-- ==========================================
 task.spawn(function()
     while task.wait(0.1) do
         local char = LP.Character
@@ -1479,7 +1453,7 @@ task.spawn(function()
         local activeRaidFolder = nil
         if raidsVisual then
             for _, f in ipairs(raidsVisual:GetChildren()) do
-                if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_" .. LP.Name) or string.find(f.Name, "Clients_" .. LP.Name)) then
+                if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_" .. LP.Name) or string.match(f.Name, "Clients_" .. LP.Name)) then
                     activeRaidFolder = f; break
                 end
             end
@@ -1488,7 +1462,7 @@ task.spawn(function()
         if activeRiftFolder ~= currentRiftFolder then currentRiftFolder = activeRiftFolder; riftStarted = false end
         if activeRaidFolder ~= currentRaidFolder then currentRaidFolder = activeRaidFolder; raidStarted = false end
 
-        -- [ ระบบ Auto Rift ทะลวงกำแพง: ออก Raid ทันทีถ้า Rift มา ]
+        -- [ ระบบ Auto Rift ]
         if autoRiftEnabled and riftSpawned then
             if currentlyInRaid then
                 smartTeleport("Lobby")
@@ -1500,13 +1474,9 @@ task.spawn(function()
                 if targetMon then
                     local targetPos = targetMon.HRP.Position + Vector3.new(0, 6, 0)
                     teleportToPosition(targetPos, true)
-                    task.wait(0.1)
                     
                     local distAfterTp = (pHRP.Position - targetMon.HRP.Position).Magnitude
-                    if distAfterTp > 15 then
-                        teleportToPosition(targetPos, true)
-                        task.wait(0.1)
-                    end
+                    if distAfterTp > 15 then teleportToPosition(targetPos, true) end
                     
                     attackMonster(targetMon, function() return autoRiftEnabled end)
                 else
@@ -1523,18 +1493,19 @@ task.spawn(function()
                         if not travelPart then travelPart = activeRiftFolder:FindFirstChild("Travel", true) end
                         if travelPart then
                             local exitPrompt = travelPart:FindFirstChildOfClass("ProximityPrompt")
-                            local pWait = 0
-                            while not exitPrompt and pWait < 50 do
-                                task.wait(0.1); exitPrompt = travelPart:FindFirstChildOfClass("ProximityPrompt"); pWait += 1
-                            end
+                            SmartWait(function()
+                                exitPrompt = travelPart:FindFirstChildOfClass("ProximityPrompt")
+                                return exitPrompt ~= nil
+                            end, 5.0)
+                            
                             if exitPrompt then
-                                local attemptExit = 0
-                                while autoRiftEnabled and onStageVal.Value ~= "Lobby" and exitPrompt.Parent and attemptExit < 30 do
-                                    local dest = travelPart:IsA("Model") and travelPart:GetPivot().Position or travelPart.Position
+                                local dest = travelPart:IsA("Model") and travelPart:GetPivot().Position or travelPart.Position
+                                SmartWait(function()
+                                    if not autoRiftEnabled or onStageVal.Value == "Lobby" or not exitPrompt.Parent then return true end
                                     teleportToPosition(dest + Vector3.new(0, 3, 0), true)
                                     pcall(function() fireproximityprompt(exitPrompt, 1, true) end)
-                                    task.wait(0.5); attemptExit += 1
-                                end
+                                    return false
+                                end, 15.0)
                             end
                         end
                         smartTeleport("Lobby")
@@ -1563,14 +1534,10 @@ task.spawn(function()
                                 if _isInside then break end
                                 
                                 local rPos = riftModel.PrimaryPart and riftModel.PrimaryPart.Position or riftModel:GetPivot().Position
-                                if rPos then
-                                    teleportToPosition(rPos + Vector3.new(0, 3, 0), true)
-                                end
+                                if rPos then teleportToPosition(rPos + Vector3.new(0, 3, 0), true) end
                                 
                                 local prompt = riftModel:FindFirstChildOfClass("ProximityPrompt", true)
-                                if prompt then
-                                    pcall(function() fireproximityprompt(prompt, 1, true) end)
-                                end
+                                if prompt then pcall(function() fireproximityprompt(prompt, 1, true) end) end
                                 task.wait(0.2)
                             end
                             break
@@ -1579,6 +1546,7 @@ task.spawn(function()
                 end
             end
 
+        -- [ ระบบ Auto Raid ]
         elseif autoRaidEnabled and currentlyInRaid then
             local configs = activeRaidFolder:FindFirstChild("Configs")
             local others = configs and configs:FindFirstChild("Others")
@@ -1605,21 +1573,12 @@ task.spawn(function()
             end
 
             if not raidStarted then
-                local waitMobDl = os.clock() + 35
-                while os.clock() < waitMobDl and autoRaidEnabled and currentlyInRaid do
-                    local stillIn = false
-                    if raidsVisual then
-                        for _, f in ipairs(raidsVisual:GetChildren()) do
-                            if not string.find(f.Name, "Rift") and (string.match(f.Name, "Server_"..LP.Name) or string.match(f.Name, "Clients_"..LP.Name)) then
-                                stillIn = true; break
-                            end
-                        end
-                    end
-                    if not stillIn then break end
+                SmartWait(function()
+                    if not autoRaidEnabled or not currentlyInRaid then return true end
                     local n, _ = countRaidMobs()
-                    if n > 0 then raidStarted = true; break end
-                    task.wait(0.3)
-                end
+                    if n > 0 then raidStarted = true; return true end
+                    return false
+                end, 35.0)
 
                 if not raidStarted then
                     if rewardsReady() then collectBoxes(others, function() return autoRaidEnabled end) end
@@ -1634,33 +1593,25 @@ task.spawn(function()
             if mobCount > 0 and targetMon then
                 local targetPos = targetMon.HRP.Position + Vector3.new(0, 6, 0)
                 teleportToPosition(targetPos, true)
-                task.wait(0.1)
                 
                 local distAfterTp = (pHRP.Position - targetMon.HRP.Position).Magnitude
-                if distAfterTp > 15 then
-                    teleportToPosition(targetPos, true)
-                    task.wait(0.1)
-                end
+                if distAfterTp > 15 then teleportToPosition(targetPos, true) end
                 
                 attackMonster(targetMon, function() return autoRaidEnabled end)
             else
-                local waveWaitDl = os.clock() + 30.0 
-                local raidEnded = false
-                
-                while os.clock() < waveWaitDl and autoRaidEnabled and currentlyInRaid do
-                    task.wait(0.5)
+                -- Smart Wait รอคลื่นใหม่
+                SmartWait(function()
                     local nMobs, _ = countRaidMobs()
-                    if nMobs > 0 then break end
-                    if rewardsReady() then raidEnded = true break end
-                end
+                    if nMobs > 0 then return true end
+                    if rewardsReady() then return true end
+                    return false
+                end, 30.0)
 
                 local currentMobsAfterWait, _ = countRaidMobs()
                 if currentMobsAfterWait == 0 then
-                    if rewardsReady() then 
-                        collectBoxes(others, function() return autoRaidEnabled end) 
-                    end
+                    if rewardsReady() then collectBoxes(others, function() return autoRaidEnabled end) end
                     
-                    -- [Force Exit System ขั้นสุดยอด: ย้ำวาร์ปกลับลอบบี้และ Leave รัวๆ]
+                    -- ⚔️ [Force Exit อัจฉริยะ (ย้ำ 10 รอบออกแน่นอน)]
                     task.spawn(function()
                         for i = 1, 10 do
                             pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
@@ -1676,6 +1627,7 @@ task.spawn(function()
                 end
             end
 
+        -- [ ระบบ Auto Abandon Village ]
         elseif autoAbandonVillageEnabled and bossSpawned then
             if currentStage ~= "Demon Forest" then
                 smartTeleport("Demon Forest")
@@ -1687,25 +1639,22 @@ task.spawn(function()
                         local destPos = bossEnterModel:IsA("Model") and (bossEnterModel.PrimaryPart and bossEnterModel.PrimaryPart.Position or bossEnterModel:GetPivot().Position) or bossEnterModel.Position
                         teleportToPosition(destPos + Vector3.new(0, 3, 0), true)
                     end
-                    task.wait(2)
+                    task.wait(1)
                 else
                     local targetMon = findBossMonster()
                     if targetMon then
                         local targetPos = targetMon.HRP.Position + Vector3.new(0, 6, 0)
                         teleportToPosition(targetPos, true)
-                        task.wait(0.1)
                         
                         local distAfterTp = (pHRP.Position - targetMon.HRP.Position).Magnitude
-                        if distAfterTp > 15 then
-                            teleportToPosition(targetPos, true)
-                            task.wait(0.1)
-                        end
+                        if distAfterTp > 15 then teleportToPosition(targetPos, true) end
                         
                         attackMonster(targetMon, function() return autoAbandonVillageEnabled end)
                     end
                 end
             end
 
+        -- [ ระบบย้ายแมพเพื่อลง Raid ]
         elseif autoRaidEnabled and not currentlyInRaid then
             if selectedRaidMap == "Double Dungeons" then
                 if currentStage ~= "Dungeons Town" then
@@ -1721,8 +1670,6 @@ task.spawn(function()
                                 teleportToPosition(dest + Vector3.new(0, 3, 0), false)
                                 pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer(unpack({selectedRaidMap, selectedRaidDifficulty})) end)
                                 task.wait(1.5)
-                            else
-                                task.wait(1)
                             end
                         end
                     end
@@ -1741,8 +1688,6 @@ task.spawn(function()
                                     teleportToPosition(dest + Vector3.new(0, 3, 0), false)
                                     pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer(unpack({selectedRaidMap, selectedRaidDifficulty})) end)
                                     task.wait(1.5)
-                                else
-                                    task.wait(1)
                                 end
                                 break
                             end
@@ -1751,65 +1696,23 @@ task.spawn(function()
                 end
             end
 
+        -- [ ระบบตีมอนฟาร์มทั่วไป ]
         elseif autoFarmEnabled and selectedMonsters[1] then
             local targetMon, nearestDist = findNearestMonsterInList()
             if targetMon then
                 local targetPos = targetMon.HRP.Position + Vector3.new(0, 6, 0)
                 teleportToPosition(targetPos, true)
-                task.wait(0.1)
                 
                 local distAfterTp = (pHRP.Position - targetMon.HRP.Position).Magnitude
-                if distAfterTp > 15 then
-                    teleportToPosition(targetPos, true)
-                    task.wait(0.1)
-                end
+                if distAfterTp > 15 then teleportToPosition(targetPos, true) end
                 
-                local activeTween = nil
-                while autoFarmEnabled and targetMon.Humanoid.Health > 0 and targetMon.Model.Parent == Server do
-                    if (autoRiftEnabled and workspace:FindFirstChild("SpawnedRifts") and #workspace.SpawnedRifts:GetChildren() > 0)
-                    or (autoAbandonVillageEnabled and RS.Values.Gamemodes.BossFights.Bosses.Value ~= "")
-                    or autoRaidEnabled then
-                        break
-                    end
-                    
-                    local char2 = LP.Character
-                    local pHRP2 = char2 and (char2:FindFirstChild("HumanoidRootPart") or char2:FindFirstChild("Torso"))
-                    if not pHRP2 then break end
-                    
-                    local hum = char2:FindFirstChildOfClass("Humanoid")
-                    if hum and not char2:FindFirstChildOfClass("Tool") then
-                        local bpTool = LP.Backpack:FindFirstChildOfClass("Tool")
-                        if bpTool then hum:EquipTool(bpTool) end
-                    end
-                    
-                    local targetPos2 = targetMon.HRP.Position
-                    local attackDist = (pHRP2.Position - targetPos2).Magnitude
-                    
-                    if attackDist > 15 then
-                        local destPos = targetPos2 + Vector3.new(0, 6, 0)
-                        if farmMode == "Tp" then
-                            if activeTween then activeTween:Cancel(); activeTween = nil end
-                            teleportToPosition(destPos, true)
-                        elseif farmMode == "Tween" then
-                            if not activeTween or activeTween.PlaybackState ~= Enum.PlaybackState.Playing then
-                                if activeTween then activeTween:Cancel() end
-                                activeTween = tweenToPosition(destPos)
-                            end
-                            if activeTween and activeTween.PlaybackState == Enum.PlaybackState.Playing then
-                                task.wait(0.1)
-                                continue
-                            end
-                        end
-                    else
-                        if activeTween then activeTween:Cancel(); activeTween = nil end
-                    end
-                    
-                    if attackDist <= 35 then
-                        pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
-                    end
-                    task.wait(0.1)
-                end
-                if activeTween then activeTween:Cancel() end
+                attackMonster(targetMon, function()
+                    if not autoFarmEnabled then return false end
+                    if (autoRiftEnabled and workspace:FindFirstChild("SpawnedRifts") and #workspace.SpawnedRifts:GetChildren() > 0) then return false end
+                    if (autoAbandonVillageEnabled and RS.Values.Gamemodes.BossFights.Bosses.Value ~= "") then return false end
+                    if autoRaidEnabled then return false end
+                    return true
+                end)
             end
         end
     end
