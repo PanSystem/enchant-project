@@ -1,17 +1,18 @@
 local isPremiumRaw, allowedGameIds, hwid = ...
 
--- 🔑 [ ระบบ Check Premium & HWID ที่เสถียรที่สุด (ป้องกันการเตะมั่ว) ]
+-- 🔑 [ ระบบ Check Premium & HWID ที่เสถียรและครอบคลุมที่สุด 100% ]
 if hwid == nil or tostring(hwid) == "" then
     game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack : HWID Not Found")
     return
 end
 
 local isPremium = false
-if isPremiumRaw == true or isPremiumRaw == "true" or isPremiumRaw == 1 then
+-- ตรวจจับค่า Premium ทุกรูปแบบที่ Loader อาจจะส่งมา
+if isPremiumRaw and tostring(isPremiumRaw):lower() ~= "false" and tostring(isPremiumRaw) ~= "0" then
     isPremium = true
 end
 
-print("✅ Enchant Hub Loaded! [Hyper-Optimized Combat Edition]")
+print("✅ Enchant Hub Loaded! [Ultimate God Tier Edition]")
 print("🔑 Premium Status: " .. tostring(isPremium))
 
 repeat task.wait() until game:IsLoaded()
@@ -49,7 +50,7 @@ local function SmartWait(conditionFunc, timeout)
     local timeElapsed = 0
     while timeElapsed < timeoutLimit do
         if conditionFunc() then return true end
-        timeElapsed = timeElapsed + task.wait(0.03) -- ลดการใช้ CPU ป้องกันเกมแลค
+        timeElapsed = timeElapsed + task.wait(0.03)
     end
     return false
 end
@@ -327,7 +328,7 @@ local function tweenToPosition(targetPos)
     return tween
 end
 
--- 🧠 [Smart Teleport ຂับเคลื่อนด้วย SmartWait]
+-- 🧠 [Smart Teleport ขั้นเทพ]
 local function smartTeleport(targetMapName)
     local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
     if not myData then return false end
@@ -364,7 +365,7 @@ local function getMapFromEgg(eggName)
 end
 
 -- ==========================================
--- [ฟังก์ชันแปลงและค้นหาข้อมูล Units]
+-- [ฟังก์ชันแปลงและค้นหาข้อมูล Units สำหรับ UI]
 -- ==========================================
 local inventoryUnitsList = {}
 local inventoryUnitsMap = {}
@@ -1011,13 +1012,15 @@ SecGeneral.AutoFarm:Button({
 })
 SecGeneral.AutoFarm:Toggle({Title = "Auto Farm Selected", Value = false, Callback = function(s) autoFarmEnabled = s end})
 
--- 🖱️ [ ระบบ Auto Click ใช้ Buffer ของแท้ 100% ]
-local autoClickBuffer = buffer.fromstring("\015")
+-- 🖱️ [ ระบบ Auto Click ธรรมดา ไม่ไปกวนระบบ Remote อื่นๆ ]
 SecGeneral.AutoFarm:Toggle({Title = "Auto Click", Value = false, Callback = function(s) autoClickEnabled = s end})
 task.spawn(function()
     while task.wait(0.1) do
         if autoClickEnabled then 
-            pcall(function() ByteNetReq:FireServer(autoClickBuffer) end)
+            pcall(function() 
+                local tool = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
+                if tool then tool:Activate() end
+            end)
         end
     end
 end)
@@ -1135,7 +1138,7 @@ task.spawn(function()
     end
 end)
 
--- 🗡️ [Ultimate Master Loop for Damage Boost]
+-- 🗡️ [Ultimate Master Loop for Damage Boost: ปิดคือปิดสนิท 100%]
 task.spawn(function()
     while true do
         if dmgBoostEnabled and isPremium then
@@ -1236,15 +1239,11 @@ local function collectBoxes(others, checkFunc)
     end
 end
 
+-- 🎯 [ฟังก์ชันค้นหามอนสเตอร์ที่ถูกต้องและแม่นยำ]
 local function getPriorityCheck()
-    local riftSpawned = false
+    local riftPortalExists = false
     local spawnedRiftsFolder = workspace:FindFirstChild("SpawnedRifts")
-    if spawnedRiftsFolder and #spawnedRiftsFolder:GetChildren() > 0 then riftSpawned = true end
-    if not riftSpawned then
-        for _, mon in ipairs(Server:GetChildren()) do
-            if string.find(mon.Name, "Rift") then riftSpawned = true; break end
-        end
-    end
+    if spawnedRiftsFolder and #spawnedRiftsFolder:GetChildren() > 0 then riftPortalExists = true end
     
     local bossValues = RS:FindFirstChild("Values")
         and RS.Values:FindFirstChild("Gamemodes")
@@ -1252,20 +1251,34 @@ local function getPriorityCheck()
         and RS.Values.Gamemodes.BossFights:FindFirstChild("Bosses")
     local bossSpawned = bossValues and bossValues.Value ~= ""
     
+    local insideRift = false
     local currentlyInRaid = false
+    local activeRiftFolder = nil
+    local activeRaidFolder = nil
+    
     local raidsVisual = workspace:FindFirstChild("Raids_Visual")
     if raidsVisual then
         for _, f in ipairs(raidsVisual:GetChildren()) do
-            if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_" .. LP.Name) or string.match(f.Name, "Clients_" .. LP.Name)) then
-                currentlyInRaid = true; break
+            if string.find(f.Name, "Rift") then
+                insideRift = true
+                activeRiftFolder = f
+            elseif string.find(f.Name, "Server_" .. LP.Name) or string.match(f.Name, "Clients_" .. LP.Name) then
+                currentlyInRaid = true
+                activeRaidFolder = f
             end
         end
     end
     
-    return riftSpawned, bossSpawned, currentlyInRaid
+    -- ค้นหาตัวมอนสเตอร์ Rift โดยตรง
+    local riftMonExists = false
+    for _, mon in ipairs(Server:GetChildren()) do
+        if string.find(mon.Name, "Rift") then riftMonExists = true; break end
+    end
+    
+    local riftActive = riftPortalExists or insideRift or riftMonExists
+    return riftActive, bossSpawned, currentlyInRaid, insideRift, activeRiftFolder, activeRaidFolder, riftPortalExists
 end
 
--- 🎯 [ล็อคเป้าโจมตีแม่นยำ ไม่ยิงรัวมั่วซั่ว]
 local function getNearestMobByPattern(pattern)
     local char = LP.Character
     local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
@@ -1301,8 +1314,8 @@ local function getNearestMonsterInList()
     for _, mon in ipairs(Server:GetChildren()) do
         local mName = modelNameToDisplay[mon.Name]
         if mName and table.find(selectedMonsters, mName) then
-            local hum = mon:FindFirstChildOfClass("Humanoid") or mon:FindFirstChild("Humanoid")
-            local hrp = mon:FindFirstChild("HumanoidRootPart") or mon:FindFirstChild("Torso") or mon:FindFirstChild("UpperTorso")
+            local hum = mon:FindFirstChildOfClass("Humanoid")
+            local hrp = mon:FindFirstChild("HumanoidRootPart")
             if hum and hum.Health > 0 and hrp then
                 if myPos then
                     local dist = (myPos - hrp.Position).Magnitude
@@ -1319,7 +1332,7 @@ local function getNearestMonsterInList()
     return targetMon
 end
 
--- 🛡️ [ฟังก์ชันเช็ค Saviors - หยุดส่ง Request ถ้าตีติดแล้ว]
+-- 🛡️ [ฟังก์ชันเช็ค Saviors - หยุดส่ง Request ถ้าตีติดแล้ว ลดปิง 100%]
 local function isPlayerInSaviors(targetMonModel)
     if not targetMonModel then return false end
     local saviorsFolder = targetMonModel:FindFirstChild("Saviors")
@@ -1334,7 +1347,7 @@ local function isPlayerInSaviors(targetMonModel)
     return false
 end
 
--- ⚔️ [สุดยอดการโจมตี: วาร์ปก่อน -> เช็คระยะ -> ส่งโจมตี 1 นัด (Smart Retry via Saviors)]
+-- ⚔️ [สุดยอดการโจมตี: วาร์ปเข้ากลางเป้าหมาย -> เช็คระยะ -> ส่งโจมตี 1 นัด -> Smart Retry via Saviors]
 local function attackMonster(targetMon, enabledCheckFunc)
     local activeTween = nil
     local lastReqTime = 0
@@ -1346,11 +1359,11 @@ local function attackMonster(targetMon, enabledCheckFunc)
         local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
         if not pHRP then break end
         
+        -- 1. วาร์ปเข้าหากลางเป้าหมายตรงๆ (Zero Offset)
         local targetPos = targetMon.HRP.Position
         local destPos = targetPos
         local attackDist = (pHRP.Position - targetPos).Magnitude
         
-        -- 1. วาร์ปเข้าหากลางเป้าหมาย
         if attackDist > 5 then
             if farmMode == "Tp" then
                 if activeTween then activeTween:Cancel(); activeTween = nil end
@@ -1367,21 +1380,21 @@ local function attackMonster(targetMon, enabledCheckFunc)
         
         -- 2. ระบบโจมตีแม่นยำ (ทำงานเฉพาะตอนไม่ได้เปิด Dmg Boost)
         if attackDist <= 40 and not dmgBoostEnabled then
-            -- เช็คว่าชื่อเราเข้าไปอยู่ใน Saviors หรือยัง ถ้ายังให้ยิง Remote
+            -- เช็คว่าชื่อเราเข้าไปอยู่ใน Saviors หรือยัง ถ้ายังให้ยิง Remote โจมตี
             if not isPlayerInSaviors(targetMon.Model) then
                 if os.clock() - lastReqTime >= 0.1 then 
                     lastReqTime = os.clock()
                     task.spawn(function()
                         local success = pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
                         if not success then
-                            task.wait(0.03) -- Retry ทันทีถ้าล้มเหลว
+                            task.wait(0.03) -- Smart Retry: ถ้ายิงไม่เข้าเซิร์ฟเวอร์ จะยิงซ้ำทันที
                             pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
                         end
                     end)
                 end
             end
         end
-        task.wait(0.03) -- ประหยัด CPU และทำงานได้โคตรไว (30 Tick ต่อวิ)
+        task.wait(0.03) -- ทำงานลื่นไหลตามเฟรมเรตคอม ประหยัด CPU สคริปต์ไม่กระตุก
     end
     if activeTween then activeTween:Cancel() end
 end
@@ -1399,33 +1412,13 @@ task.spawn(function()
         local onStageVal = myData and myData:FindFirstChild("Data") and myData.Data:FindFirstChild("OnStage")
         local currentStage = onStageVal and onStageVal.Value or ""
 
-        local riftSpawned, bossSpawned, currentlyInRaid = getPriorityCheck()
-        local raidsVisual = workspace:FindFirstChild("Raids_Visual")
-        local spawnedRiftsFolder = workspace:FindFirstChild("SpawnedRifts")
-
-        local insideRift, activeRiftFolder = false, nil
-        if raidsVisual then
-            for _, folder in ipairs(raidsVisual:GetChildren()) do
-                if string.find(folder.Name, "Rift") then
-                    insideRift, activeRiftFolder = true, folder; break
-                end
-            end
-        end
-
-        local activeRaidFolder = nil
-        if raidsVisual then
-            for _, f in ipairs(raidsVisual:GetChildren()) do
-                if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_" .. LP.Name) or string.match(f.Name, "Clients_" .. LP.Name)) then
-                    activeRaidFolder = f; break
-                end
-            end
-        end
+        local riftActive, bossSpawned, currentlyInRaid, insideRift, activeRiftFolder, activeRaidFolder, riftPortalExists = getPriorityCheck()
 
         if activeRiftFolder ~= currentRiftFolder then currentRiftFolder = activeRiftFolder; riftStarted = false end
         if activeRaidFolder ~= currentRaidFolder then currentRaidFolder = activeRaidFolder; raidStarted = false end
 
-        -- [ ระบบ Auto Rift ทะลวงกำแพง ]
-        if autoRiftEnabled and riftSpawned then
+        -- [ ระบบ Auto Rift ทะลวงกำแพง: โคตรแม่นยำ ]
+        if autoRiftEnabled and riftActive then
             if currentlyInRaid and not insideRift then
                 pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer("Leave") end)
                 smartTeleport("Lobby")
@@ -1469,19 +1462,15 @@ task.spawn(function()
                         riftStarted = false
                     end
                 end
-            else
-                if spawnedRiftsFolder and #spawnedRiftsFolder:GetChildren() > 0 then
-                    local isReaperMap = (currentStage == "Reaper Society")
-                    if not isReaperMap and workspace:FindFirstChild("Block_Maps") and workspace.Block_Maps:FindFirstChild("Reaper Society") then
-                        isReaperMap = true
+            elseif riftPortalExists then
+                if currentStage ~= "Reaper Society" then
+                    if smartTeleport("Lobby") then
+                        smartTeleport("Reaper Society")
                     end
-
-                    if not isReaperMap then
-                        if smartTeleport("Lobby") then
-                            smartTeleport("Reaper Society")
-                        end
-                    else
-                        for _, riftModel in ipairs(spawnedRiftsFolder:GetChildren()) do
+                else
+                    local portals = workspace:FindFirstChild("SpawnedRifts")
+                    if portals then
+                        for _, riftModel in ipairs(portals:GetChildren()) do
                             while autoRiftEnabled and riftModel.Parent ~= nil do
                                 local _isInside = false
                                 if workspace:FindFirstChild("Raids_Visual") then
