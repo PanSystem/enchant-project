@@ -4,7 +4,7 @@ if isPremium == nil or hwid == nil then
     game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack")
     return
 end
-print("✅ Enchant Hub Loaded!")
+print("✅ Enchant Hub Loaded! version 0.1.2")
 print("🔑 Premium Status: " .. tostring(isPremium))
 
 repeat task.wait() until game:IsLoaded()
