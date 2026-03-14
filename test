@@ -1,10 +1,17 @@
-local isPremium, allowedGameIds, hwid = ...
+local isPremiumRaw, allowedGameIds, hwid = ...
 
-if isPremium == nil or hwid == nil then
-    game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack")
+-- 🔑 [ ระบบ Check Premium & HWID ที่เสถียรที่สุด (ป้องกันการเตะมั่ว) ]
+if hwid == nil or tostring(hwid) == "" then
+    game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack : HWID Not Found")
     return
 end
-print("✅ Enchant Hub Loaded! [Saviors Check & Combat Precision Edition]")
+
+local isPremium = false
+if isPremiumRaw == true or isPremiumRaw == "true" or isPremiumRaw == 1 then
+    isPremium = true
+end
+
+print("✅ Enchant Hub Loaded! [Hyper-Optimized Combat Edition]")
 print("🔑 Premium Status: " .. tostring(isPremium))
 
 repeat task.wait() until game:IsLoaded()
@@ -35,14 +42,14 @@ local hideRerollEnabled, hideRewardEnabled = false, false
 local rewardNames = {"Reward", "Rewards", "RewardUI", "RewardsUI", "Reward_Visuals", "Rewards_Visuals", "Drops", "Drop"}
 
 -- ==========================================
--- [ 🧠 ระบบ SmartWait ขั้นสูงสุด ]
+-- [ 🧠 ระบบ SmartWait ขั้นสูงสุด (ประหยัดทรัพยากร ทนปิง) ]
 -- ==========================================
 local function SmartWait(conditionFunc, timeout)
     local timeoutLimit = timeout or 5.0
     local timeElapsed = 0
     while timeElapsed < timeoutLimit do
         if conditionFunc() then return true end
-        timeElapsed = timeElapsed + task.wait()
+        timeElapsed = timeElapsed + task.wait(0.03) -- ลดการใช้ CPU ป้องกันเกมแลค
     end
     return false
 end
@@ -57,7 +64,7 @@ LP.Idled:Connect(function()
 end)
 
 -- ==========================================
--- [ ระบบ Spoof Name ]
+-- [ ระบบ Spoof Name แบบไล่สี (Gradient) ]
 -- ==========================================
 local function applySpoofName(char)
     if not char then return end
@@ -76,7 +83,6 @@ local function applySpoofName(char)
             if v:IsA("TextLabel") then
                 v.Visible = true
                 v.TextColor3 = Color3.new(1, 1, 1) 
-                
                 local grad = v:FindFirstChildOfClass("UIGradient") or Instance.new("UIGradient", v)
                 grad.Color = seq
             end
@@ -321,6 +327,7 @@ local function tweenToPosition(targetPos)
     return tween
 end
 
+-- 🧠 [Smart Teleport ຂับเคลื่อนด้วย SmartWait]
 local function smartTeleport(targetMapName)
     local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
     if not myData then return false end
@@ -668,7 +675,7 @@ task.spawn(function()
             local isDataLoading = false
             
             -- ===================================
-            -- [1] เช็คเงื่อนไข Traits
+            -- [1] เช็คเงื่อนไข Traits (แม่นยำ ห้ามซ้ำ ส่งแบบดิบเป๊ะๆ)
             -- ===================================
             local priIsGood = false
             local subIsGood = false
@@ -1004,15 +1011,13 @@ SecGeneral.AutoFarm:Button({
 })
 SecGeneral.AutoFarm:Toggle({Title = "Auto Farm Selected", Value = false, Callback = function(s) autoFarmEnabled = s end})
 
--- 🖱️ [ ระบบ Auto Click ใช้ Tool:Activate ล้วนๆ ไม่พึ่ง Remote Buffer ]
+-- 🖱️ [ ระบบ Auto Click ใช้ Buffer ของแท้ 100% ]
+local autoClickBuffer = buffer.fromstring("\015")
 SecGeneral.AutoFarm:Toggle({Title = "Auto Click", Value = false, Callback = function(s) autoClickEnabled = s end})
 task.spawn(function()
     while task.wait(0.1) do
         if autoClickEnabled then 
-            pcall(function() 
-                local tool = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
-                if tool then tool:Activate() end
-            end)
+            pcall(function() ByteNetReq:FireServer(autoClickBuffer) end)
         end
     end
 end)
@@ -1093,7 +1098,7 @@ local function setAutoAttackState(state)
     end)
 end
 
--- 🔒 [ล็อคฟังก์ชัน Damage Boost ขั้นเด็ดขาด]
+-- 🔒 [ล็อคฟังก์ชัน Damage Boost ขั้นเด็ดขาด แบบไม่แอบเปิด]
 SecGeneral.Section_DmgBoost:Toggle({
     Title = "Damage Boost", Value = false,
     Callback = function(state)
@@ -1235,8 +1240,10 @@ local function getPriorityCheck()
     local riftSpawned = false
     local spawnedRiftsFolder = workspace:FindFirstChild("SpawnedRifts")
     if spawnedRiftsFolder and #spawnedRiftsFolder:GetChildren() > 0 then riftSpawned = true end
-    for _, mon in ipairs(Server:GetChildren()) do
-        if string.find(mon.Name, "Rift") then riftSpawned = true; break end
+    if not riftSpawned then
+        for _, mon in ipairs(Server:GetChildren()) do
+            if string.find(mon.Name, "Rift") then riftSpawned = true; break end
+        end
     end
     
     local bossValues = RS:FindFirstChild("Values")
@@ -1258,17 +1265,20 @@ local function getPriorityCheck()
     return riftSpawned, bossSpawned, currentlyInRaid
 end
 
+-- 🎯 [ล็อคเป้าโจมตีแม่นยำ ไม่ยิงรัวมั่วซั่ว]
 local function getNearestMobByPattern(pattern)
     local char = LP.Character
     local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+    local myPos = pHRP and pHRP.Position or nil
     local bestMob, minDist = nil, math.huge
+    
     for _, mon in ipairs(Server:GetChildren()) do
         if string.find(mon.Name, pattern) then
             local hum = mon:FindFirstChildOfClass("Humanoid")
             local hrp = mon:FindFirstChild("HumanoidRootPart")
             if hum and hum.Health > 0 and hrp then
-                if pHRP then
-                    local d = (pHRP.Position - hrp.Position).Magnitude
+                if myPos then
+                    local d = (myPos - hrp.Position).Magnitude
                     if d < minDist then
                         minDist = d
                         bestMob = {Model=mon, HRP=hrp, Humanoid=hum}
@@ -1285,16 +1295,21 @@ end
 local function getNearestMonsterInList()
     local char = LP.Character
     local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+    local myPos = pHRP and pHRP.Position or nil
     local targetMon, nearestDist = nil, math.huge
+    
     for _, mon in ipairs(Server:GetChildren()) do
         local mName = modelNameToDisplay[mon.Name]
         if mName and table.find(selectedMonsters, mName) then
             local hum = mon:FindFirstChildOfClass("Humanoid") or mon:FindFirstChild("Humanoid")
             local hrp = mon:FindFirstChild("HumanoidRootPart") or mon:FindFirstChild("Torso") or mon:FindFirstChild("UpperTorso")
             if hum and hum.Health > 0 and hrp then
-                if pHRP then
-                    local dist = (pHRP.Position - hrp.Position).Magnitude
-                    if dist < nearestDist then nearestDist = dist; targetMon = {Model=mon, HRP=hrp, Humanoid=hum} end
+                if myPos then
+                    local dist = (myPos - hrp.Position).Magnitude
+                    if dist < nearestDist then 
+                        nearestDist = dist
+                        targetMon = {Model=mon, HRP=hrp, Humanoid=hum} 
+                    end
                 elseif not targetMon then
                     targetMon = {Model=mon, HRP=hrp, Humanoid=hum}
                 end
@@ -1304,7 +1319,7 @@ local function getNearestMonsterInList()
     return targetMon
 end
 
--- 🛡️ [ฟังก์ชันเช็ค Saviors - ถ้าชื่อเราเข้าไปแล้วแปลว่ายิงติด ไม่ต้องส่งคำสั่งซ้ำให้แลค!]
+-- 🛡️ [ฟังก์ชันเช็ค Saviors - หยุดส่ง Request ถ้าตีติดแล้ว]
 local function isPlayerInSaviors(targetMonModel)
     if not targetMonModel then return false end
     local saviorsFolder = targetMonModel:FindFirstChild("Saviors")
@@ -1331,17 +1346,11 @@ local function attackMonster(targetMon, enabledCheckFunc)
         local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
         if not pHRP then break end
         
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum and not char:FindFirstChildOfClass("Tool") then
-            local bpTool = LP.Backpack:FindFirstChildOfClass("Tool")
-            if bpTool then hum:EquipTool(bpTool) end
-        end
-        
-        -- 1. วาร์ปเข้าหากลางเป้าหมายตรงๆ (Zero Offset)
         local targetPos = targetMon.HRP.Position
         local destPos = targetPos
         local attackDist = (pHRP.Position - targetPos).Magnitude
         
+        -- 1. วาร์ปเข้าหากลางเป้าหมาย
         if attackDist > 5 then
             if farmMode == "Tp" then
                 if activeTween then activeTween:Cancel(); activeTween = nil end
@@ -1357,18 +1366,22 @@ local function attackMonster(targetMon, enabledCheckFunc)
         end
         
         -- 2. ระบบโจมตีแม่นยำ (ทำงานเฉพาะตอนไม่ได้เปิด Dmg Boost)
-        if attackDist <= 35 and not dmgBoostEnabled then
-            -- ถ้าชื่อเรายังไม่ไปโผล่ใน Saviors ของมอนสเตอร์แปลว่าคำสั่งโจมตียังไม่ถึงเซิร์ฟ!
+        if attackDist <= 40 and not dmgBoostEnabled then
+            -- เช็คว่าชื่อเราเข้าไปอยู่ใน Saviors หรือยัง ถ้ายังให้ยิง Remote
             if not isPlayerInSaviors(targetMon.Model) then
                 if os.clock() - lastReqTime >= 0.1 then 
                     lastReqTime = os.clock()
                     task.spawn(function()
-                        pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+                        local success = pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+                        if not success then
+                            task.wait(0.03) -- Retry ทันทีถ้าล้มเหลว
+                            pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+                        end
                     end)
                 end
             end
         end
-        task.wait() -- ทำงานลื่นไหลตามเฟรมเรตคอม ไม่มียิงรัวแบบมั่วซั่ว
+        task.wait(0.03) -- ประหยัด CPU และทำงานได้โคตรไว (30 Tick ต่อวิ)
     end
     if activeTween then activeTween:Cancel() end
 end
@@ -1413,7 +1426,7 @@ task.spawn(function()
 
         -- [ ระบบ Auto Rift ทะลวงกำแพง ]
         if autoRiftEnabled and riftSpawned then
-            if currentlyInRaid then
+            if currentlyInRaid and not insideRift then
                 pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer("Leave") end)
                 smartTeleport("Lobby")
                 continue
