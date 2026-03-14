@@ -4,7 +4,7 @@ if isPremium == nil or hwid == nil then
     game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack")
     return
 end
-print("✅ Enchant Hub Loaded! [version 0.1.2]")
+print("✅ Enchant Hub Loaded! [Ultimate Combat & Precision Edition]")
 print("🔑 Premium Status: " .. tostring(isPremium))
 
 repeat task.wait() until game:IsLoaded()
@@ -57,7 +57,7 @@ LP.Idled:Connect(function()
 end)
 
 -- ==========================================
--- [ ระบบ Spoof Name แบบไล่สี ]
+-- [ ระบบ Spoof Name แบบไล่สี (Gradient) ]
 -- ==========================================
 local function applySpoofName(char)
     if not char then return end
@@ -76,7 +76,12 @@ local function applySpoofName(char)
             if v:IsA("TextLabel") then
                 v.Visible = true
                 v.TextColor3 = Color3.new(1, 1, 1) 
-                local grad = v:FindFirstChildOfClass("UIGradient") or Instance.new("UIGradient", v)
+                
+                local grad = v:FindFirstChildOfClass("UIGradient")
+                if not grad then
+                    grad = Instance.new("UIGradient")
+                    grad.Parent = v
+                end
                 grad.Color = seq
             end
         end
@@ -153,6 +158,7 @@ local talentUIToRemote = {
     ["Critical"] = "Critical_Damage",
     ["Speed"] = "Speed"
 }
+local allTalentKeys = {"Damage", "Abilities_DMG", "Critical_Damage", "Speed"}
 
 local tVL = {}
 for g, d in pairs(talent_check) do
@@ -260,6 +266,7 @@ local SecGeneral = {
     MiscFeatures     = Tabs.Misc:Section({Title = "Features", Opened = true}),
 }
 
+-- [ระบบ Fast Rerolls ใน Premium]
 local fastRerollEnabled = false
 SecGeneral.SecPremiumMisc:Toggle({
     Title = "Fast Reroll",
@@ -271,7 +278,7 @@ SecGeneral.SecPremiumMisc:Toggle({
 })
 task.spawn(function()
     while task.wait(0.05) do
-        if fastRerollEnabled then
+        if fastRerollEnabled and isPremium then
             pcall(function()
                 local rerollUI = LP.PlayerGui:FindFirstChild("Rerolls_Visuals") and LP.PlayerGui.Rerolls_Visuals:FindFirstChild("Rerolls")
                 local gamepassVal = RS:FindFirstChild("Players_Data") 
@@ -318,7 +325,7 @@ local function tweenToPosition(targetPos)
     return tween
 end
 
--- 🧠 [Smart Teleport ขับเคลื่อนด้วย SmartWait ป้องกันลูปค้าง]
+-- 🧠 [Smart Teleport ขับเคลื่อนด้วย SmartWait]
 local function smartTeleport(targetMapName)
     local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
     if not myData then return false end
@@ -327,13 +334,11 @@ local function smartTeleport(targetMapName)
     if onStage and onStage.Value == targetMapName then return true end
 
     if mapBuffers[targetMapName] then
-        -- ย้ำแค่ 5 รอบพอเพื่อลดขยะเน็ต แต่ละรอบรอ 3 วิ
-        for i = 1, 5 do
-            if onStage.Value == targetMapName then return true end
+        for i = 1, 3 do 
             pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers[targetMapName])) end)
             local success = SmartWait(function() return onStage.Value == targetMapName end, 3.0)
             if success then 
-                task.wait(0.5) -- รอเซิร์ฟเวอร์เรนเดอร์โมเดล
+                task.wait(0.5) 
                 return true 
             end
         end
@@ -347,11 +352,8 @@ local function getMapFromEgg(eggName)
     
     for mapName, _ in pairs(mapBuffers) do
         local lowerMap = string.lower(mapName)
-        if string.find(lowerMap, lowerEgg) or string.find(lowerEgg, lowerMap) then
-            return mapName
-        end
+        if string.find(lowerMap, lowerEgg) or string.find(lowerEgg, lowerMap) then return mapName end
     end
-    
     if string.find(lowerEgg, "namex") then return "Namex Planet" end
     if string.find(lowerEgg, "colosseum") then return "Colosseum Kingdom" end
     if string.find(lowerEgg, "demon") then return "Demon Forest" end
@@ -392,14 +394,8 @@ local function RefreshInventoryUnits()
         for _, uData in ipairs(tempUnits) do
             local bn = uData.bName
             currentCounts[bn] = (currentCounts[bn] or 0) + 1
-            
             local finalName = bn
-            if nameOccurrences[bn] > 1 then
-                finalName = bn .. " " .. currentCounts[bn]
-            else
-                finalName = bn .. " 1"
-            end
-            
+            if nameOccurrences[bn] > 1 then finalName = bn .. " " .. currentCounts[bn] else finalName = bn .. " 1" end
             table.insert(inventoryUnitsList, finalName)
             inventoryUnitsMap[finalName] = uData.folder
         end
@@ -424,13 +420,9 @@ local function getStatLayoutAndTier(statName, valNumStr)
     
     local t = tVL[statName]
     local gData = t and t[math.floor(valNum * 10000 + 0.5)] or nil
-    if gData then
-        return gData.layout, gData.name
-    end
+    if gData then return gData.layout, gData.name end
     
-    local bestLayout = 0
-    local bestTier = "N/A"
-    local minDiff = math.huge
+    local bestLayout, bestTier, minDiff = 0, "N/A", math.huge
     for tier, data in pairs(talent_check) do
         local targetVal = data.Status[statName]
         if targetVal then
@@ -641,7 +633,7 @@ Tabs.Unit:Toggle({
 })
 
 -- ==========================================
--- [Logic Loop: Auto Queue (Traits & Talents) Ultimate Perfection]
+-- [Logic Loop: Auto Queue (Traits & Talents) Ultimate]
 -- ==========================================
 task.spawn(function()
     while task.wait(0.1) do
@@ -761,7 +753,7 @@ task.spawn(function()
             end
             
             -- ===================================
-            -- [2] เช็คเงื่อนไข Talents (เฉพาะช่องเป้าหมาย)
+            -- [2] เช็คเงื่อนไข Talents (เฉพาะช่องเป้าหมาย หรือ Once ถ้าไม่มี SSS)
             -- ===================================
             local targetLayout = talent_check[targetTalentTier] and talent_check[targetTalentTier].layout or 0
             local highestCurrentLayout = 0
@@ -770,9 +762,7 @@ task.spawn(function()
             local oldValForRoll = nil
             
             if autoTalentsEnabled and #targetTalents > 0 then
-                local allTalentKeys = {"Damage", "Abilities_DMG", "Critical_Damage", "Speed"}
-                
-                -- หาค่าสูงสุดในตัวละคร (เช็คทั้ง 4 ช่อง)
+                -- หาค่า Layout สูงสุดจากทั้ง 4 ช่องเพื่อตัดสินใจว่าจะใช้ Once หรือ Specific
                 for _, rStat in ipairs(allTalentKeys) do
                     local valStr = getRawStat(activeUnit, rStat)
                     if valStr == "N/A" then isDataLoading = true end
@@ -781,7 +771,7 @@ task.spawn(function()
                 end
 
                 local allTalentsGood = true
-                -- ตรวจสอบเฉพาะเป้าหมายที่ผู้เล่นเลือกใน Dropdown
+                -- ตรวจสอบเฉพาะช่องเป้าหมายที่เราเลือก
                 for _, uiTalent in ipairs(targetTalents) do
                     local remStatName = talentUIToRemote[uiTalent]
                     local valStrTarget = getRawStat(activeUnit, remStatName)
@@ -828,13 +818,13 @@ task.spawn(function()
                     
                 elseif not talentsDone then
                     if highestCurrentLayout < 16 then
-                        -- ถ้าไม่มี SSS ให้สุ่ม Once เพื่อประหยัด
+                        -- ถ้าไม่มี SSS เลยสักช่องเดียว ให้สุ่ม Once
                         pcall(function()
                             RS:WaitForChild("Remotes"):WaitForChild("Systems"):WaitForChild("Potentials_Rolling"):FireServer(activeUnit.Name, "Reroll", "Once")
                         end)
-                        task.wait(0.5)
+                        task.wait(0.3) -- Once อาจจะต้องใช้ hard wait สั้นๆ เพราะค่าเปลี่ยน 4 ช่องพร้อมกัน
                     elseif slotToRollTalent then
-                        -- ถ้ามี SSS แล้ว ล็อคเป้าช่องเป้าหมายเท่านั้น
+                        -- ถ้ามี SSS แล้ว ล็อคเป้าช่องเป้าหมายเท่านั้น!
                         pcall(function()
                             RS:WaitForChild("Remotes"):WaitForChild("Systems"):WaitForChild("Potentials_Rolling"):FireServer(activeUnit.Name, "Reroll", slotToRollTalent)
                         end)
@@ -1053,7 +1043,10 @@ SecGeneral.AutoFarm:Button({
     end
 })
 SecGeneral.AutoFarm:Toggle({Title = "Auto Farm Selected", Value = false, Callback = function(s) autoFarmEnabled = s end})
-SecGeneral.AutoFarm:Toggle({Title = "Auto Click",         Value = false, Callback = function(s) autoClickEnabled = s end})
+
+-- [ ระบบ Auto Click ใช้ Tool Activate ดั้งเดิม ไม่ใช้ Buffer ปลอม ]
+SecGeneral.AutoFarm:Toggle({Title = "Auto Click", Value = false, Callback = function(s) autoClickEnabled = s end})
+
 SecGeneral.SecModeFarm:Dropdown({
     Title = "Select Mode Farm", Values = {"Tp", "Tween"}, Value = "Tp",
     Callback = function(v) farmMode = v end
@@ -1171,7 +1164,7 @@ task.spawn(function()
     end
 end)
 
--- 🗡️ [Ultimate Master Loop for Damage Boost]
+-- 🗡️ [Ultimate Master Loop for Damage Boost: ห้ามแอบตี 1,000,000%]
 task.spawn(function()
     while true do
         if dmgBoostEnabled and isPremium then
@@ -1208,10 +1201,15 @@ task.spawn(function()
     end
 end)
 
+-- 🖱️ [ระบบ Auto Click สะอาดหมดจด ไม่กวน Damage Boost]
 task.spawn(function()
-    local clickArgs = {buffer.fromstring("\015")}
-    while task.wait() do
-        if autoClickEnabled then pcall(function() ByteNetReq:FireServer(unpack(clickArgs)) end) end
+    while task.wait(0.1) do
+        if autoClickEnabled then 
+            pcall(function() 
+                local tool = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
+                if tool then tool:Activate() end
+            end)
+        end
     end
 end)
 
@@ -1312,11 +1310,34 @@ local function getPriorityCheck()
     return riftSpawned, bossSpawned, currentlyInRaid
 end
 
-local function findNearestMonsterInList()
+-- 🎯 [ล็อคเป้าโจมตีแม่นยำ ไม่ยิงรัวมั่วซั่ว]
+local function getNearestMobByPattern(pattern)
     local char = LP.Character
     local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
-    if not pHRP then return nil end
-    
+    local bestMob, minDist = nil, math.huge
+    for _, mon in ipairs(Server:GetChildren()) do
+        if string.find(mon.Name, pattern) then
+            local hum = mon:FindFirstChildOfClass("Humanoid")
+            local hrp = mon:FindFirstChild("HumanoidRootPart")
+            if hum and hum.Health > 0 and hrp then
+                if pHRP then
+                    local d = (pHRP.Position - hrp.Position).Magnitude
+                    if d < minDist then
+                        minDist = d
+                        bestMob = {Model=mon, HRP=hrp, Humanoid=hum}
+                    end
+                elseif not bestMob then
+                    bestMob = {Model=mon, HRP=hrp, Humanoid=hum}
+                end
+            end
+        end
+    end
+    return bestMob, minDist
+end
+
+local function getNearestMonsterInList()
+    local char = LP.Character
+    local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
     local targetMon, nearestDist = nil, math.huge
     for _, mon in ipairs(Server:GetChildren()) do
         local mName = modelNameToDisplay[mon.Name]
@@ -1324,59 +1345,23 @@ local function findNearestMonsterInList()
             local hum = mon:FindFirstChildOfClass("Humanoid") or mon:FindFirstChild("Humanoid")
             local hrp = mon:FindFirstChild("HumanoidRootPart") or mon:FindFirstChild("Torso") or mon:FindFirstChild("UpperTorso")
             if hum and hum.Health > 0 and hrp then
-                local dist = (pHRP.Position - hrp.Position).Magnitude
-                if dist < nearestDist then nearestDist = dist; targetMon = {Model=mon, HRP=hrp, Humanoid=hum} end
+                if pHRP then
+                    local dist = (pHRP.Position - hrp.Position).Magnitude
+                    if dist < nearestDist then nearestDist = dist; targetMon = {Model=mon, HRP=hrp, Humanoid=hum} end
+                elseif not targetMon then
+                    targetMon = {Model=mon, HRP=hrp, Humanoid=hum}
+                end
             end
         end
     end
     return targetMon, nearestDist
 end
 
-local function findRiftMonster()
-    local targetMon = nil
-    for _, mon in ipairs(Server:GetChildren()) do
-        if string.find(mon.Name, "Rift") then
-            local hum = mon:FindFirstChildOfClass("Humanoid")
-            local hrp = mon:FindFirstChild("HumanoidRootPart")
-            if hum and hum.Health > 0 and hrp then
-                targetMon = {Model=mon, HRP=hrp, Humanoid=hum}; break
-            end
-        end
-    end
-    return targetMon
-end
-
-local function findBossMonster()
-    local targetMon = nil
-    for _, mon in ipairs(Server:GetChildren()) do
-        if string.find(mon.Name, "BossFight") then
-            local hum = mon:FindFirstChildOfClass("Humanoid")
-            local hrp = mon:FindFirstChild("HumanoidRootPart")
-            if hum and hum.Health > 0 and hrp then
-                targetMon = {Model=mon, HRP=hrp, Humanoid=hum}; break
-            end
-        end
-    end
-    return targetMon
-end
-
-local function findRaidMonster()
-    local targetMon = nil
-    for _, mon in ipairs(Server:GetChildren()) do
-        if string.find(mon.Name, "Raid") then
-            local hum = mon:FindFirstChildOfClass("Humanoid")
-            local hrp = mon:FindFirstChild("HumanoidRootPart")
-            if hum and hum.Health > 0 and hrp then
-                targetMon = {Model=mon, HRP=hrp, Humanoid=hum}; break
-            end
-        end
-    end
-    return targetMon
-end
-
+-- ⚔️ [การโจมตีแบบปลอดภัย: แยก Damage Boost ออกจาก Mouse Request ชัดเจน]
 local function attackMonster(targetMon, enabledCheckFunc)
     local activeTween = nil
-    while targetMon.Humanoid.Health > 0 and targetMon.Model.Parent == Server do
+    -- เช็คด้วย IsDescendantOf กันบัคมอนตายแล้วค้าง
+    while targetMon and targetMon.Model and targetMon.Model:IsDescendantOf(workspace) and targetMon.Humanoid and targetMon.Humanoid.Health > 0 do
         if enabledCheckFunc and not enabledCheckFunc() then break end
 
         local char = LP.Character
@@ -1402,17 +1387,20 @@ local function attackMonster(targetMon, enabledCheckFunc)
                     if activeTween then activeTween:Cancel() end
                     activeTween = tweenToPosition(destPos)
                 end
-                if activeTween and activeTween.PlaybackState == Enum.PlaybackState.Playing then
-                    task.wait(0.1)
-                    continue
-                end
             end
         else
             if activeTween then activeTween:Cancel(); activeTween = nil end
         end
         
+        -- 🛡️ ยิงตีปกติเฉพาะตอนปิด Damage Boost พร้อมระบบเช็ค Retry อัจฉริยะ
         if attackDist <= 35 then
-            pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+            if not dmgBoostEnabled then
+                local success = pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+                if not success then
+                    task.wait(0.03) -- Retry ทันทีถ้าเน็ตกระตุก
+                    pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+                end
+            end
         end
         task.wait(0.05)
     end
@@ -1457,22 +1445,17 @@ task.spawn(function()
         if activeRiftFolder ~= currentRiftFolder then currentRiftFolder = activeRiftFolder; riftStarted = false end
         if activeRaidFolder ~= currentRaidFolder then currentRaidFolder = activeRaidFolder; raidStarted = false end
 
-        -- [ ระบบ Auto Rift ]
+        -- [ ระบบ Auto Rift ดึงคิวสำคัญที่สุด ทะลวง Raid ]
         if autoRiftEnabled and riftSpawned then
             if currentlyInRaid then
+                pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer("Leave") end)
                 smartTeleport("Lobby")
                 continue
             end
             
             if insideRift and activeRiftFolder then
-                local targetMon = findRiftMonster()
+                local targetMon, _ = getNearestMobByPattern("Rift")
                 if targetMon then
-                    local targetPos = targetMon.HRP.Position + Vector3.new(0, 6, 0)
-                    teleportToPosition(targetPos, true)
-                    
-                    local distAfterTp = (pHRP.Position - targetMon.HRP.Position).Magnitude
-                    if distAfterTp > 15 then teleportToPosition(targetPos, true) end
-                    
                     attackMonster(targetMon, function() return autoRiftEnabled end)
                 else
                     local configs = activeRiftFolder:FindFirstChild("Configs")
@@ -1491,16 +1474,16 @@ task.spawn(function()
                             SmartWait(function()
                                 exitPrompt = travelPart:FindFirstChildOfClass("ProximityPrompt")
                                 return exitPrompt ~= nil
-                            end, 5.0)
+                            end, 3.0)
                             
                             if exitPrompt then
-                                local dest = travelPart:IsA("Model") and travelPart:GetPivot().Position or travelPart.Position
-                                SmartWait(function()
-                                    if not autoRiftEnabled or onStageVal.Value == "Lobby" or not exitPrompt.Parent then return true end
+                                local attemptExit = 0
+                                while autoRiftEnabled and onStageVal.Value ~= "Lobby" and exitPrompt.Parent and attemptExit < 20 do
+                                    local dest = travelPart:IsA("Model") and travelPart:GetPivot().Position or travelPart.Position
                                     teleportToPosition(dest + Vector3.new(0, 3, 0), true)
                                     pcall(function() fireproximityprompt(exitPrompt, 1, true) end)
-                                    return false
-                                end, 15.0)
+                                    task.wait(0.5); attemptExit += 1
+                                end
                             end
                         end
                         smartTeleport("Lobby")
@@ -1515,8 +1498,9 @@ task.spawn(function()
                     end
 
                     if not isReaperMap then
-                        smartTeleport("Lobby")
-                        smartTeleport("Reaper Society")
+                        if smartTeleport("Lobby") then
+                            smartTeleport("Reaper Society")
+                        end
                     else
                         for _, riftModel in ipairs(spawnedRiftsFolder:GetChildren()) do
                             while autoRiftEnabled and riftModel.Parent ~= nil do
@@ -1547,18 +1531,15 @@ task.spawn(function()
             local others = configs and configs:FindFirstChild("Others")
 
             local function countRaidMobs()
-                local count, best = 0, nil
+                local count = 0
                 for _, mon in ipairs(Server:GetChildren()) do
                     if string.find(mon.Name, "Raid") then
                         local hum = mon:FindFirstChildOfClass("Humanoid")
                         local hrp = mon:FindFirstChild("HumanoidRootPart")
-                        if hum and hum.Health > 0 and hrp then
-                            count += 1
-                            if not best then best = {Model=mon, HRP=hrp, Humanoid=hum} end
-                        end
+                        if hum and hum.Health > 0 and hrp then count += 1 end
                     end
                 end
-                return count, best
+                return count
             end
 
             local function rewardsReady()
@@ -1570,10 +1551,9 @@ task.spawn(function()
             if not raidStarted then
                 SmartWait(function()
                     if not autoRaidEnabled or not currentlyInRaid then return true end
-                    local n, _ = countRaidMobs()
-                    if n > 0 then raidStarted = true; return true end
+                    if countRaidMobs() > 0 then raidStarted = true; return true end
                     return false
-                end, 35.0)
+                end, 20.0)
 
                 if not raidStarted then
                     if rewardsReady() then collectBoxes(others, function() return autoRaidEnabled end) end
@@ -1583,37 +1563,29 @@ task.spawn(function()
                 end
             end
 
-            local mobCount, targetMon = countRaidMobs()
+            local targetMon, _ = getNearestMobByPattern("Raid")
 
-            if mobCount > 0 and targetMon then
-                local targetPos = targetMon.HRP.Position + Vector3.new(0, 6, 0)
-                teleportToPosition(targetPos, true)
-                
-                local distAfterTp = (pHRP.Position - targetMon.HRP.Position).Magnitude
-                if distAfterTp > 15 then teleportToPosition(targetPos, true) end
-                
+            if targetMon then
                 attackMonster(targetMon, function() return autoRaidEnabled end)
             else
-                -- รอ Wave ถัดไป หรือรอว่าด่านจะจบ
+                -- Smart Wait รอ Wave ถัดไปรวดเร็ว
                 SmartWait(function()
-                    local nMobs, _ = countRaidMobs()
-                    if nMobs > 0 then return true end
+                    if countRaidMobs() > 0 then return true end
                     if rewardsReady() then return true end
                     return false
-                end, 30.0)
+                end, 15.0)
 
-                local currentMobsAfterWait, _ = countRaidMobs()
-                if currentMobsAfterWait == 0 then
+                if countRaidMobs() == 0 then
                     if rewardsReady() then collectBoxes(others, function() return autoRaidEnabled end) end
                     
-                    -- ⚔️ [Force Exit อัจฉริยะ (ย้ำ 10 รอบออกแน่นอนแบบ 100%)]
+                    -- ⚔️ [Force Exit ทะลวงกำแพง: ย้ำวาร์ปกลับ Lobby รัวๆ]
                     task.spawn(function()
                         for i = 1, 10 do
-                            pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
                             pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer("Leave") end)
-                            task.wait(1.5)
+                            pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
                             local curSt = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name) and RS.Players_Data[LP.Name]:FindFirstChild("Data") and RS.Players_Data[LP.Name].Data:FindFirstChild("OnStage")
                             if curSt and curSt.Value == "Lobby" then break end
+                            task.wait(1.0)
                         end
                     end)
                     
@@ -1634,16 +1606,9 @@ task.spawn(function()
                         local destPos = bossEnterModel:IsA("Model") and (bossEnterModel.PrimaryPart and bossEnterModel.PrimaryPart.Position or bossEnterModel:GetPivot().Position) or bossEnterModel.Position
                         teleportToPosition(destPos + Vector3.new(0, 3, 0), true)
                     end
-                    task.wait(1)
                 else
-                    local targetMon = findBossMonster()
+                    local targetMon, _ = getNearestMobByPattern("BossFight")
                     if targetMon then
-                        local targetPos = targetMon.HRP.Position + Vector3.new(0, 6, 0)
-                        teleportToPosition(targetPos, true)
-                        
-                        local distAfterTp = (pHRP.Position - targetMon.HRP.Position).Magnitude
-                        if distAfterTp > 15 then teleportToPosition(targetPos, true) end
-                        
                         attackMonster(targetMon, function() return autoAbandonVillageEnabled end)
                     end
                 end
@@ -1664,7 +1629,6 @@ task.spawn(function()
                                 local dest = specifyPod:IsA("Model") and (specifyPod.PrimaryPart and specifyPod.PrimaryPart.Position or specifyPod:GetPivot().Position) or specifyPod.Position
                                 teleportToPosition(dest + Vector3.new(0, 3, 0), false)
                                 pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer(unpack({selectedRaidMap, selectedRaidDifficulty})) end)
-                                task.wait(1.5)
                             end
                         end
                     end
@@ -1682,7 +1646,6 @@ task.spawn(function()
                                     local dest = pod:IsA("Model") and (pod.PrimaryPart and pod.PrimaryPart.Position or pod:GetPivot().Position) or pod.Position
                                     teleportToPosition(dest + Vector3.new(0, 3, 0), false)
                                     pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer(unpack({selectedRaidMap, selectedRaidDifficulty})) end)
-                                    task.wait(1.5)
                                 end
                                 break
                             end
@@ -1693,14 +1656,8 @@ task.spawn(function()
 
         -- [ ระบบตีมอนฟาร์มทั่วไป ]
         elseif autoFarmEnabled and selectedMonsters[1] then
-            local targetMon, nearestDist = findNearestMonsterInList()
+            local targetMon, _ = getNearestMonsterInList()
             if targetMon then
-                local targetPos = targetMon.HRP.Position + Vector3.new(0, 6, 0)
-                teleportToPosition(targetPos, true)
-                
-                local distAfterTp = (pHRP.Position - targetMon.HRP.Position).Magnitude
-                if distAfterTp > 15 then teleportToPosition(targetPos, true) end
-                
                 attackMonster(targetMon, function()
                     if not autoFarmEnabled then return false end
                     if (autoRiftEnabled and workspace:FindFirstChild("SpawnedRifts") and #workspace.SpawnedRifts:GetChildren() > 0) then return false end
