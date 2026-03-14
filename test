@@ -4,7 +4,7 @@ if isPremium == nil or hwid == nil then
     game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack")
     return
 end
-print("✅ Enchant Hub Loaded! [Ultimate Precision & Clean Combat Edition]")
+print("✅ Enchant Hub Loaded! [Saviors Check & Combat Precision Edition]")
 print("🔑 Premium Status: " .. tostring(isPremium))
 
 repeat task.wait() until game:IsLoaded()
@@ -35,7 +35,7 @@ local hideRerollEnabled, hideRewardEnabled = false, false
 local rewardNames = {"Reward", "Rewards", "RewardUI", "RewardsUI", "Reward_Visuals", "Rewards_Visuals", "Drops", "Drop"}
 
 -- ==========================================
--- [ 🧠 ระบบ SmartWait ขั้นสูงสุด (ทนปิง ทนแลค) ]
+-- [ 🧠 ระบบ SmartWait ขั้นสูงสุด ]
 -- ==========================================
 local function SmartWait(conditionFunc, timeout)
     local timeoutLimit = timeout or 5.0
@@ -57,7 +57,7 @@ LP.Idled:Connect(function()
 end)
 
 -- ==========================================
--- [ ระบบ Spoof Name แบบไล่สี (Gradient) ]
+-- [ ระบบ Spoof Name ]
 -- ==========================================
 local function applySpoofName(char)
     if not char then return end
@@ -77,21 +77,15 @@ local function applySpoofName(char)
                 v.Visible = true
                 v.TextColor3 = Color3.new(1, 1, 1) 
                 
-                local grad = v:FindFirstChildOfClass("UIGradient")
-                if not grad then
-                    grad = Instance.new("UIGradient")
-                    grad.Parent = v
-                end
+                local grad = v:FindFirstChildOfClass("UIGradient") or Instance.new("UIGradient", v)
                 grad.Color = seq
             end
         end
 
         local disp = overheads:FindFirstChild("DisplayNames")
         if disp and disp:IsA("TextLabel") then disp.Text = "Enchant Hub" end
-
         local names = overheads:FindFirstChild("Names")
         if names and names:IsA("TextLabel") then names.Text = "discord.gg/jUeYgfrrPC" end
-
         local title = overheads:FindFirstChild("Title")
         if title and title:IsA("TextLabel") then title.Text = "by xchant" end
     end)
@@ -111,7 +105,7 @@ local mapBuffers = {
     ["Reaper Society"]    = "\004\014\000Reaper Society"
 }
 
--- [ Data Tables สำหรับ Traits และ Talents ]
+-- [ Data Tables ]
 local trait_check = {
     ["Assault I"]="Assault_1",["Assault II"]="Assault_2",["Assault III"]="Assault_3",
     ["Genius I"]="Genius_1",  ["Genius II"]="Genius_2",  ["Genius III"]="Genius_3",
@@ -327,7 +321,6 @@ local function tweenToPosition(targetPos)
     return tween
 end
 
--- 🧠 [Smart Teleport ขับเคลื่อนด้วย SmartWait]
 local function smartTeleport(targetMapName)
     local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
     if not myData then return false end
@@ -364,7 +357,7 @@ local function getMapFromEgg(eggName)
 end
 
 -- ==========================================
--- [ฟังก์ชันแปลงและค้นหาข้อมูล Units สำหรับ UI]
+-- [ฟังก์ชันแปลงและค้นหาข้อมูล Units]
 -- ==========================================
 local inventoryUnitsList = {}
 local inventoryUnitsMap = {}
@@ -675,7 +668,7 @@ task.spawn(function()
             local isDataLoading = false
             
             -- ===================================
-            -- [1] เช็คเงื่อนไข Traits (แม่นยำ ห้ามซ้ำ ส่งแบบดิบเป๊ะๆ)
+            -- [1] เช็คเงื่อนไข Traits
             -- ===================================
             local priIsGood = false
             local subIsGood = false
@@ -1011,7 +1004,7 @@ SecGeneral.AutoFarm:Button({
 })
 SecGeneral.AutoFarm:Toggle({Title = "Auto Farm Selected", Value = false, Callback = function(s) autoFarmEnabled = s end})
 
--- 🖱️ [ ระบบ Auto Click ขาวสะอาดปราศจากบัค Buffer ทับซ้อน 100% ]
+-- 🖱️ [ ระบบ Auto Click ใช้ Tool:Activate ล้วนๆ ไม่พึ่ง Remote Buffer ]
 SecGeneral.AutoFarm:Toggle({Title = "Auto Click", Value = false, Callback = function(s) autoClickEnabled = s end})
 task.spawn(function()
     while task.wait(0.1) do
@@ -1137,7 +1130,7 @@ task.spawn(function()
     end
 end)
 
--- 🗡️ [Ultimate Master Loop for Damage Boost: ห้ามแอบตี 1,000,000%]
+-- 🗡️ [Ultimate Master Loop for Damage Boost]
 task.spawn(function()
     while true do
         if dmgBoostEnabled and isPremium then
@@ -1311,7 +1304,22 @@ local function getNearestMonsterInList()
     return targetMon
 end
 
--- ⚔️ [การโจมตีแบบปลอดภัย: วาร์ปเข้ากลางตัวมอนตรงๆ ไร้ขยะ Remote ปลอม]
+-- 🛡️ [ฟังก์ชันเช็ค Saviors - ถ้าชื่อเราเข้าไปแล้วแปลว่ายิงติด ไม่ต้องส่งคำสั่งซ้ำให้แลค!]
+local function isPlayerInSaviors(targetMonModel)
+    if not targetMonModel then return false end
+    local saviorsFolder = targetMonModel:FindFirstChild("Saviors")
+    if not saviorsFolder then return false end
+
+    local playerName = LP.Name
+    for _, val in ipairs(saviorsFolder:GetChildren()) do
+        if val:IsA("StringValue") and val.Value == playerName then
+            return true
+        end
+    end
+    return false
+end
+
+-- ⚔️ [สุดยอดการโจมตี: วาร์ปก่อน -> เช็คระยะ -> ส่งโจมตี 1 นัด (Smart Retry via Saviors)]
 local function attackMonster(targetMon, enabledCheckFunc)
     local activeTween = nil
     local lastReqTime = 0
@@ -1348,19 +1356,19 @@ local function attackMonster(targetMon, enabledCheckFunc)
             if activeTween then activeTween:Cancel(); activeTween = nil end
         end
         
-        -- 2. เช็คระยะย้ำหลังวาร์ป และส่ง Request โจมตี 1 ครั้งแบบควบคุมได้ (กันบัคแครช)
+        -- 2. ระบบโจมตีแม่นยำ (ทำงานเฉพาะตอนไม่ได้เปิด Dmg Boost)
         if attackDist <= 35 and not dmgBoostEnabled then
-            if os.clock() - lastReqTime >= 0.15 then 
-                lastReqTime = os.clock()
-                local success, err = pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
-                if not success then
-                    -- Smart Retry: ถ้ายิงไม่เข้าเวิร์ฟเวอร์ จะยิงซ้ำทันที
-                    task.wait(0.05)
-                    pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+            -- ถ้าชื่อเรายังไม่ไปโผล่ใน Saviors ของมอนสเตอร์แปลว่าคำสั่งโจมตียังไม่ถึงเซิร์ฟ!
+            if not isPlayerInSaviors(targetMon.Model) then
+                if os.clock() - lastReqTime >= 0.1 then 
+                    lastReqTime = os.clock()
+                    task.spawn(function()
+                        pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+                    end)
                 end
             end
         end
-        task.wait() -- ทำงานลื่นไหลตามเฟรมเรตคอม
+        task.wait() -- ทำงานลื่นไหลตามเฟรมเรตคอม ไม่มียิงรัวแบบมั่วซั่ว
     end
     if activeTween then activeTween:Cancel() end
 end
