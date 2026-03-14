@@ -35,7 +35,7 @@ local hideRerollEnabled, hideRewardEnabled = false, false
 local rewardNames = {"Reward", "Rewards", "RewardUI", "RewardsUI", "Reward_Visuals", "Rewards_Visuals", "Drops", "Drop"}
 
 -- ==========================================
--- [ ระบบ Anti AFK (ป้องกันการโดนเตะเมื่ออยู่นิ่งนานๆ) ]
+-- [ ระบบ Anti AFK ]
 -- ==========================================
 local VirtualUser = game:GetService("VirtualUser")
 LP.Idled:Connect(function()
@@ -98,7 +98,6 @@ local mapBuffers = {
     ["Reaper Society"]    = "\004\014\000Reaper Society"
 }
 
--- [ Data Tables สำหรับ Traits และ Talents ]
 local trait_check = {
     ["Assault I"]="Assault_1",["Assault II"]="Assault_2",["Assault III"]="Assault_3",
     ["Genius I"]="Genius_1",  ["Genius II"]="Genius_2",  ["Genius III"]="Genius_3",
@@ -148,7 +147,6 @@ local talentUIToRemote = {
     ["Speed"] = "Speed"
 }
 
--- สร้าง Lookup table สำหรับเช็ค Talents แบบแม่นยำสูงสุด
 local tVL = {}
 for g, d in pairs(talent_check) do
     for s, v in pairs(d.Status) do
@@ -255,7 +253,6 @@ local SecGeneral = {
     MiscFeatures     = Tabs.Misc:Section({Title = "Features", Opened = true}),
 }
 
--- [ระบบ Fast Rerolls ใน Premium]
 local fastRerollEnabled = false
 SecGeneral.SecPremiumMisc:Toggle({
     Title = "Fast Reroll",
@@ -457,7 +454,6 @@ local function waitTraitChange(unitFolder, slotToRoll, oldVal, timeout)
     return false
 end
 
--- ฟังก์ชันตัดเลขโรมันออกอย่างแม่นยำ
 local function getBaseTraitName(name)
     local b = string.match(name, "^(.-)%s+III$") or string.match(name, "^(.-)%s+II$") or string.match(name, "^(.-)%s+I$")
     return b or name
@@ -466,7 +462,7 @@ end
 local autoTraitsEnabled = false
 local autoTalentsEnabled = false
 local customQueue = {} 
-local unitStates = {} -- "waiting", "rolling", "done"
+local unitStates = {} 
 
 local function getUnitInfoText(unitFolder, isRolling, currentActiveDisp, tDone, talDone)
     if not unitFolder then return "No unit selected." end
@@ -552,19 +548,16 @@ dropdowns.SelectInventoryUnits = Tabs.Unit:Dropdown({
     Callback = function(opts)
         local selectedOpts = opts or {}
         
-        -- ล้างตัวที่ถูกเอาติ๊กออก
-        for i = #customQueue, 1, -1 do
-            if not table.find(selectedOpts, customQueue[i]) then
-                unitStates[customQueue[i]] = nil
-                table.remove(customQueue, i)
-            end
-        end
-        
-        -- นำเข้าคิวเพิ่ม
         for _, o in ipairs(selectedOpts) do
             if not table.find(customQueue, o) then
                 table.insert(customQueue, o)
                 unitStates[o] = "waiting"
+            end
+        end
+        for i = #customQueue, 1, -1 do
+            if not table.find(selectedOpts, customQueue[i]) then
+                unitStates[customQueue[i]] = nil
+                table.remove(customQueue, i)
             end
         end
         
@@ -664,11 +657,10 @@ task.spawn(function()
             local targetBuffsClean = {}
             local isDataLoading = false
             
-            -- [1] เช็คเงื่อนไข Traits (แม่นยำด้วย Internal Target)
+            -- [1] เช็คเงื่อนไข Traits (แม่นยำด้วย Internal Target + ห้ามซ้ำ)
             local priIsGood = false
             local subIsGood = false
-            
-            local slotToRoll = "Primary" -- กำหนดค่าตั้งต้น
+            local slotToRoll = "Primary"
             
             if autoTraitsEnabled and #targetTraits > 0 then
                 local currentPri = safeGetNestedVal(activeUnit, "Traits", "Primary")
@@ -689,17 +681,17 @@ task.spawn(function()
                 if internalTargets[currentSub] then subIsGood = true end
                 
                 if #targetTraits == 1 then
-                    -- เลือก 1 บัฟ : ต้องได้เหมือนกันทั้ง 2 ช่อง
+                    -- เลือก 1 บัฟ : ต้องเหมือนกัน 2 ช่อง
                     if priIsGood and subIsGood then
                         traitsDone = true
                     else
                         traitsDone = false
                     end
                 else
-                    -- เลือก >= 2 บัฟ : ต้องได้เป้าหมาย และต้องห้ามซ้ำกัน
+                    -- เลือกหลายบัฟ : ต้องตรงเป้าหมาย และ ห้ามซ้ำ
                     if priIsGood and subIsGood then
                         if currentPri == currentSub then
-                            subIsGood = false -- บังคับสุ่ม Sub ทิ้งถ้าซ้ำ
+                            subIsGood = false -- ถ้าซ้ำกัน บังคับสุ่ม Sub ทิ้ง
                             traitsDone = false
                         else
                             traitsDone = true
@@ -709,7 +701,7 @@ task.spawn(function()
                     end
                 end
                 
-                -- สร้าง Array เป้าหมายให้เกมสุ่ม (ตัดของที่ซ้ำออก เพื่อไม่ให้เกมล็อคมั่ว)
+                -- สร้างเป้าหมายส่ง Remote โดยคัดบัฟที่ได้ไปแล้วออก เพื่อบังคับห้ามซ้ำ
                 if not traitsDone and not isDataLoading then
                     if priIsGood then slotToRoll = "Sub" end
                     local otherSlotVal = (slotToRoll == "Primary") and currentSub or currentPri
@@ -723,7 +715,6 @@ task.spawn(function()
                                 table.insert(targetBuffsClean, cleanName)
                             end
                         else
-                            -- ถ้าเรากำลังสุ่มช่องหนึ่งอยู่ ไม่ต้องเอาเป้าหมายที่อีกช่องมีอยู่แล้วยัดใส่ Array
                             if internal ~= otherSlotVal then
                                 if not table.find(targetBuffsClean, cleanName) then
                                     table.insert(targetBuffsClean, cleanName)
@@ -776,18 +767,11 @@ task.spawn(function()
             
             unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, true, activeUnitDisp, traitsDone, talentsDone))
             
-            -- [3] ทำงานส่ง Remote (ข้ามคิวเมื่อทำเสร็จ)
+            -- [3] ทำงานส่ง Remote (ข้ามคิวเมื่อสำเร็จ)
             if traitsDone and talentsDone then
                 unitStates[activeUnitDisp] = "done"
                 unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, false, activeUnitDisp, true, true))
                 task.wait(1) 
-                
-                for i, v in ipairs(customQueue) do
-                    if v == activeUnitDisp then
-                        table.remove(customQueue, i)
-                        break
-                    end
-                end
             else
                 if not traitsDone then
                     local oldTraitVal = slotToRoll == "Primary" and safeGetNestedVal(activeUnit, "Traits", "Primary") or safeGetNestedVal(activeUnit, "Traits", "Sub")
@@ -820,7 +804,7 @@ end)
 
 
 -- ==========================================
--- [UI Tab : Hide Reroll / Reward (คืนค่าได้ 100%)]
+-- [UI Tab : Hide Reroll / Reward (คืนค่าเป๊ะ 100%)]
 -- ==========================================
 SecGeneral.MiscFeatures:Toggle({
     Title = "Hide Reroll",
@@ -1106,11 +1090,88 @@ local function setAutoAttackState(state)
     end)
 end
 
+local function checkAndAttackAllMonsters()
+    if not dmgBoostEnabled then return end
+    local t = tick()
+    if t - lastAttackTime < (dmgBoostCooldown or 0.05) then return end
+    
+    local myFolder = UnitsServer:FindFirstChild(LP.Name)
+    if not myFolder then return end
+    
+    local hasDebounceTrue = false
+    for _, unit in ipairs(myFolder:GetChildren()) do
+        local debounce = unit:FindFirstChild("Debounce")
+        if debounce and debounce.Value == true then
+            hasDebounceTrue = true
+            break
+        end
+    end
+    
+    if hasDebounceTrue then
+        lastAttackTime = t
+        pcall(function() ByteNetReq:FireServer(attackBuffer) end)
+    end
+end
+
+local function setupDamageBoostForUnit(unit)
+    if dmgBoostConnections[unit] then return end
+    
+    local debounce = unit:WaitForChild("Debounce", 1)
+    if debounce then
+        local conn = debounce:GetPropertyChangedSignal("Value"):Connect(function()
+            if dmgBoostEnabled and debounce.Value == true then
+                checkAndAttackAllMonsters()
+            end
+        end)
+        dmgBoostConnections[unit] = conn
+    end
+end
+
+task.spawn(function()
+    local myFolder = UnitsServer:FindFirstChild(LP.Name)
+    if myFolder then
+        for _, unit in ipairs(myFolder:GetChildren()) do
+            setupDamageBoostForUnit(unit)
+        end
+        myFolder.ChildAdded:Connect(function(child)
+            if dmgBoostEnabled then
+                setupDamageBoostForUnit(child)
+            end
+        end)
+    end
+    
+    UnitsServer.ChildAdded:Connect(function(child)
+        if child.Name == LP.Name and dmgBoostEnabled then
+            for _, unit in ipairs(child:GetChildren()) do
+                setupDamageBoostForUnit(unit)
+            end
+            child.ChildAdded:Connect(function(unit)
+                if dmgBoostEnabled then
+                    setupDamageBoostForUnit(unit)
+                end
+            end)
+        end
+    end)
+end)
+
 SecGeneral.Section_DmgBoost:Toggle({
     Title = "Damage Boost", Value = false,
     Callback = function(state)
         dmgBoostEnabled = state
         setAutoAttackState(state)
+        if state then
+            local myFolder = UnitsServer:FindFirstChild(LP.Name)
+            if myFolder then
+                for _, unit in ipairs(myFolder:GetChildren()) do
+                    setupDamageBoostForUnit(unit)
+                end
+            end
+        else
+            for unit, conn in pairs(dmgBoostConnections) do
+                if conn then conn:Disconnect() end
+            end
+            table.clear(dmgBoostConnections)
+        end
     end
 })
 SecGeneral.Section_DmgBoost:Toggle({
@@ -1137,39 +1198,13 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while task.wait() do
-        if dmgBoostEnabled then
-            if not pauseDmgBoost then
-                local myFolder = UnitsServer:FindFirstChild(LP.Name)
-                if myFolder then
-                    local hasDebounceTrue = false
-                    for _, unit in ipairs(myFolder:GetChildren()) do
-                        local db = unit:FindFirstChild("Debounce")
-                        if db and db.Value == true then
-                            hasDebounceTrue = true
-                            break
-                        end
-                    end
-                    if hasDebounceTrue then
-                        pcall(function() ByteNetReq:FireServer(attackBuffer) end)
-                        task.wait(dmgBoostCooldown or 0.08)
-                    end
-                end
-            end
-        else
-            task.wait(0.5)
-        end
-    end
-end)
-
-task.spawn(function()
     local clickArgs = {buffer.fromstring("\015")}
     while task.wait() do
         if autoClickEnabled then pcall(function() ByteNetReq:FireServer(unpack(clickArgs)) end) end
     end
 end)
 
-local function collectBoxes(others)
+local function collectBoxes(others, checkFunc)
     if not others then return end
     local rewardsFolder = others:FindFirstChild("Rewards")
     if not rewardsFolder then
@@ -1179,7 +1214,7 @@ local function collectBoxes(others)
 
     local waitDl = os.clock() + 5.0
     while os.clock() < waitDl do
-        if not autoRaidEnabled then return end
+        if checkFunc and not checkFunc() then return end
         if #rewardsFolder:GetChildren() > 0 then break end
         task.wait(0.1)
     end
@@ -1194,7 +1229,8 @@ local function collectBoxes(others)
     end
 
     local collectDl = os.clock() + 20.0
-    while os.clock() < collectDl and autoRaidEnabled do
+    while os.clock() < collectDl do
+        if checkFunc and not checkFunc() then return end
         local boxes     = rewardsFolder:GetChildren()
         local anyActive = false
 
@@ -1215,7 +1251,8 @@ local function collectBoxes(others)
                 pHRP.CFrame = CFrame.new(targetPos)
             end
             local fireDl = os.clock() + 3.0
-            while os.clock() < fireDl and autoRaidEnabled do
+            while os.clock() < fireDl do
+                if checkFunc and not checkFunc() then return end
                 if not prm or not prm.Parent or not prm.Enabled then break end
                 if not box.Parent then break end
                 pHRP = LP.Character and (LP.Character:FindFirstChild("HumanoidRootPart") or LP.Character:FindFirstChild("Torso"))
@@ -1241,7 +1278,7 @@ local function getPriorityCheck()
     local spawnedRiftsFolder = workspace:FindFirstChild("SpawnedRifts")
     if spawnedRiftsFolder and #spawnedRiftsFolder:GetChildren() > 0 then riftSpawned = true end
     for _, mon in ipairs(Server:GetChildren()) do
-        if string.match(mon.Name, "^Rifts") then riftSpawned = true; break end
+        if string.find(mon.Name, "Rift") then riftSpawned = true; break end
     end
     
     local bossValues = RS:FindFirstChild("Values")
@@ -1254,7 +1291,7 @@ local function getPriorityCheck()
     local raidsVisual = workspace:FindFirstChild("Raids_Visual")
     if raidsVisual then
         for _, f in ipairs(raidsVisual:GetChildren()) do
-            if not string.match(f.Name, "Rift") and (string.match(f.Name, "Server_" .. LP.Name) or string.match(f.Name, "Clients_" .. LP.Name)) then
+            if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_" .. LP.Name) or string.find(f.Name, "Clients_" .. LP.Name)) then
                 currentlyInRaid = true; break
             end
         end
@@ -1286,7 +1323,7 @@ end
 local function findRiftMonster()
     local targetMon = nil
     for _, mon in ipairs(Server:GetChildren()) do
-        if string.match(mon.Name, "^Rifts") then
+        if string.find(mon.Name, "Rift") then
             local hum = mon:FindFirstChildOfClass("Humanoid")
             local hrp = mon:FindFirstChild("HumanoidRootPart")
             if hum and hum.Health > 0 and hrp then
@@ -1300,7 +1337,7 @@ end
 local function findBossMonster()
     local targetMon = nil
     for _, mon in ipairs(Server:GetChildren()) do
-        if string.match(mon.Name, "^BossFight") then
+        if string.find(mon.Name, "BossFight") then
             local hum = mon:FindFirstChildOfClass("Humanoid")
             local hrp = mon:FindFirstChild("HumanoidRootPart")
             if hum and hum.Health > 0 and hrp then
@@ -1314,7 +1351,7 @@ end
 local function findRaidMonster()
     local targetMon = nil
     for _, mon in ipairs(Server:GetChildren()) do
-        if string.match(mon.Name, "^Raids") then
+        if string.find(mon.Name, "Raid") then
             local hum = mon:FindFirstChildOfClass("Humanoid")
             local hrp = mon:FindFirstChild("HumanoidRootPart")
             if hum and hum.Health > 0 and hrp then
@@ -1325,9 +1362,12 @@ local function findRaidMonster()
     return targetMon
 end
 
-local function attackMonster(targetMon)
+local function attackMonster(targetMon, enabledCheckFunc)
     local activeTween = nil
     while targetMon.Humanoid.Health > 0 and targetMon.Model.Parent == Server do
+        -- Smart Break: ถ้ากดปิด Toggle จะหลุดลูปทันที!
+        if enabledCheckFunc and not enabledCheckFunc() then break end
+
         local char = LP.Character
         local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
         if not pHRP then break end
@@ -1385,7 +1425,7 @@ task.spawn(function()
         local insideRift, activeRiftFolder = false, nil
         if raidsVisual then
             for _, folder in ipairs(raidsVisual:GetChildren()) do
-                if string.match(folder.Name, "Rift") then
+                if string.find(folder.Name, "Rift") then
                     insideRift, activeRiftFolder = true, folder; break
                 end
             end
@@ -1394,7 +1434,7 @@ task.spawn(function()
         local activeRaidFolder = nil
         if raidsVisual then
             for _, f in ipairs(raidsVisual:GetChildren()) do
-                if not string.match(f.Name, "Rift") and (string.match(f.Name, "Server_" .. LP.Name) or string.match(f.Name, "Clients_" .. LP.Name)) then
+                if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_" .. LP.Name) or string.find(f.Name, "Clients_" .. LP.Name)) then
                     activeRaidFolder = f; break
                 end
             end
@@ -1403,11 +1443,11 @@ task.spawn(function()
         if activeRiftFolder ~= currentRiftFolder then currentRiftFolder = activeRiftFolder; riftStarted = false end
         if activeRaidFolder ~= currentRaidFolder then currentRaidFolder = activeRaidFolder; raidStarted = false end
 
-        -- [ ระบบ Auto Rift ทะลวงกำแพง: ห้ามค้างในด่าน ]
+        -- [ ระบบ Auto Rift ทะลวงกำแพง: ออก Raid ทันทีถ้า Rift มา ]
         if autoRiftEnabled and riftSpawned then
             if currentlyInRaid then
                 pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
-                task.wait(3)
+                task.wait(4)
                 continue
             end
             
@@ -1424,7 +1464,7 @@ task.spawn(function()
                         task.wait(0.1)
                     end
                     
-                    attackMonster(targetMon)
+                    attackMonster(targetMon, function() return autoRiftEnabled end)
                 else
                     local configs = activeRiftFolder:FindFirstChild("Configs")
                     local others = configs and configs:FindFirstChild("Others")
@@ -1478,7 +1518,7 @@ task.spawn(function()
                                 local _isInside = false
                                 if workspace:FindFirstChild("Raids_Visual") then
                                     for _, f in ipairs(workspace.Raids_Visual:GetChildren()) do
-                                        if string.match(f.Name, "Rift") then _isInside = true; break end
+                                        if string.find(f.Name, "Rift") then _isInside = true; break end
                                     end
                                 end
                                 if _isInside then break end
@@ -1507,7 +1547,7 @@ task.spawn(function()
             local function countRaidMobs()
                 local count, best = 0, nil
                 for _, mon in ipairs(Server:GetChildren()) do
-                    if string.match(mon.Name, "^Raids") then
+                    if string.find(mon.Name, "Raid") then
                         local hum = mon:FindFirstChildOfClass("Humanoid")
                         local hrp = mon:FindFirstChild("HumanoidRootPart")
                         if hum and hum.Health > 0 and hrp then
@@ -1531,7 +1571,7 @@ task.spawn(function()
                     local stillIn = false
                     if raidsVisual then
                         for _, f in ipairs(raidsVisual:GetChildren()) do
-                            if not string.match(f.Name, "Rift") and (string.match(f.Name, "Server_"..LP.Name) or string.match(f.Name, "Clients_"..LP.Name)) then
+                            if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_"..LP.Name) or string.find(f.Name, "Clients_"..LP.Name)) then
                                 stillIn = true; break
                             end
                         end
@@ -1543,7 +1583,7 @@ task.spawn(function()
                 end
 
                 if not raidStarted then
-                    if rewardsReady() then collectBoxes(others) end
+                    if rewardsReady() then collectBoxes(others, function() return autoRaidEnabled end) end
                     pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
                     task.wait(5); raidStarted = false; currentRaidFolder = nil
                     continue
@@ -1563,7 +1603,7 @@ task.spawn(function()
                     task.wait(0.1)
                 end
                 
-                attackMonster(targetMon)
+                attackMonster(targetMon, function() return autoRaidEnabled end)
             else
                 local waveWaitDl = os.clock() + 30.0 
                 local raidEnded = false
@@ -1583,19 +1623,17 @@ task.spawn(function()
                 local currentMobsAfterWait, _ = countRaidMobs()
                 if currentMobsAfterWait == 0 then
                     if rewardsReady() then 
-                        collectBoxes(others) 
+                        collectBoxes(others, function() return autoRaidEnabled end) 
                     end
                     
-                    -- [Force Exit System ขั้นสูงสุด: บังคับวาร์ปกลับลอบบี้ทันที]
-                    task.spawn(function()
-                        for i = 1, 10 do
-                            pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
-                            pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer("Leave") end)
-                            task.wait(2)
-                            local curSt = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name) and RS.Players_Data[LP.Name]:FindFirstChild("Data") and RS.Players_Data[LP.Name].Data:FindFirstChild("OnStage")
-                            if curSt and curSt.Value == "Lobby" then break end
-                        end
-                    end)
+                    -- [Force Exit System ขั้นสุดยอด: ย้ำวาร์ปกลับลอบบี้และ Leave ทันที 100%]
+                    for i = 1, 10 do
+                        pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
+                        pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer("Leave") end)
+                        task.wait(1.5)
+                        local curSt = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name) and RS.Players_Data[LP.Name]:FindFirstChild("Data") and RS.Players_Data[LP.Name].Data:FindFirstChild("OnStage")
+                        if curSt and curSt.Value == "Lobby" then break end
+                    end
                     
                     raidStarted = false
                     currentRaidFolder = nil
@@ -1628,7 +1666,7 @@ task.spawn(function()
                             task.wait(0.1)
                         end
                         
-                        attackMonster(targetMon)
+                        attackMonster(targetMon, function() return autoAbandonVillageEnabled end)
                     end
                 end
             end
@@ -1663,7 +1701,7 @@ task.spawn(function()
                     local raidsEntering = workspace:FindFirstChild("Raids_Entering")
                     if raidsEntering then
                         for _, pod in ipairs(raidsEntering:GetChildren()) do
-                            if string.match(pod.Name, "^Pod") then
+                            if string.find(pod.Name, "Pod") then
                                 local curUI = LP.PlayerGui:FindFirstChild("Gamemodes") and LP.PlayerGui.Gamemodes:FindFirstChild("Raids")
                                 if not (curUI and curUI.Visible) then
                                     local dest = pod:IsA("Model") and (pod.PrimaryPart and pod.PrimaryPart.Position or pod:GetPivot().Position) or pod.Position
