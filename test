@@ -1,9 +1,10 @@
 local isPremium, allowedGameIds, hwid = ...
+
 if isPremium == nil or hwid == nil then
     game:GetService("Players").LocalPlayer:Kick("❌ Stop Crack")
     return
 end
-print("✅ Enchant Hub Loaded! [Ultimate Edition]")
+print("✅ Enchant Hub Loaded! [version 0.1.2]")
 print("🔑 Premium Status: " .. tostring(isPremium))
 
 repeat task.wait() until game:IsLoaded()
@@ -34,7 +35,7 @@ local hideRerollEnabled, hideRewardEnabled = false, false
 local rewardNames = {"Reward", "Rewards", "RewardUI", "RewardsUI", "Reward_Visuals", "Rewards_Visuals", "Drops", "Drop"}
 
 -- ==========================================
--- [ 🧠 ระบบ SmartWait (ทำงานรวดเร็วตาม Ping/FPS) ]
+-- [ 🧠 ระบบ SmartWait ขั้นสูงสุด (ทนปิง ทนแลค) ]
 -- ==========================================
 local function SmartWait(conditionFunc, timeout)
     local timeoutLimit = timeout or 5.0
@@ -56,7 +57,7 @@ LP.Idled:Connect(function()
 end)
 
 -- ==========================================
--- [ ระบบ Spoof Name แบบไล่สี (Gradient) ]
+-- [ ระบบ Spoof Name แบบไล่สี ]
 -- ==========================================
 local function applySpoofName(char)
     if not char then return end
@@ -75,22 +76,15 @@ local function applySpoofName(char)
             if v:IsA("TextLabel") then
                 v.Visible = true
                 v.TextColor3 = Color3.new(1, 1, 1) 
-                
-                local grad = v:FindFirstChildOfClass("UIGradient")
-                if not grad then
-                    grad = Instance.new("UIGradient")
-                    grad.Parent = v
-                end
+                local grad = v:FindFirstChildOfClass("UIGradient") or Instance.new("UIGradient", v)
                 grad.Color = seq
             end
         end
 
         local disp = overheads:FindFirstChild("DisplayNames")
         if disp and disp:IsA("TextLabel") then disp.Text = "Enchant Hub" end
-
         local names = overheads:FindFirstChild("Names")
         if names and names:IsA("TextLabel") then names.Text = "discord.gg/jUeYgfrrPC" end
-
         local title = overheads:FindFirstChild("Title")
         if title and title:IsA("TextLabel") then title.Text = "by xchant" end
     end)
@@ -159,9 +153,7 @@ local talentUIToRemote = {
     ["Critical"] = "Critical_Damage",
     ["Speed"] = "Speed"
 }
-local allTalentKeys = {"Damage", "Abilities_DMG", "Critical_Damage", "Speed"}
 
--- สร้าง Lookup table สำหรับเช็ค Talents แบบแม่นยำสูงสุด
 local tVL = {}
 for g, d in pairs(talent_check) do
     for s, v in pairs(d.Status) do
@@ -268,22 +260,18 @@ local SecGeneral = {
     MiscFeatures     = Tabs.Misc:Section({Title = "Features", Opened = true}),
 }
 
--- [ระบบ Fast Rerolls ใน Premium]
 local fastRerollEnabled = false
 SecGeneral.SecPremiumMisc:Toggle({
     Title = "Fast Reroll",
     Value = false,
     Callback = function(s) 
-        if s and not isPremium then 
-            fastRerollEnabled = false
-            return 
-        end
+        if s and not isPremium then return end
         fastRerollEnabled = s 
     end
 })
 task.spawn(function()
     while task.wait(0.05) do
-        if fastRerollEnabled and isPremium then
+        if fastRerollEnabled then
             pcall(function()
                 local rerollUI = LP.PlayerGui:FindFirstChild("Rerolls_Visuals") and LP.PlayerGui.Rerolls_Visuals:FindFirstChild("Rerolls")
                 local gamepassVal = RS:FindFirstChild("Players_Data") 
@@ -330,7 +318,7 @@ local function tweenToPosition(targetPos)
     return tween
 end
 
--- 🧠 [Smart Teleport แบบไดนามิก]
+-- 🧠 [Smart Teleport ขับเคลื่อนด้วย SmartWait ป้องกันลูปค้าง]
 local function smartTeleport(targetMapName)
     local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
     if not myData then return false end
@@ -339,13 +327,15 @@ local function smartTeleport(targetMapName)
     if onStage and onStage.Value == targetMapName then return true end
 
     if mapBuffers[targetMapName] then
-        local attemptTime = os.clock()
-        while os.clock() - attemptTime < 15 do
+        -- ย้ำแค่ 5 รอบพอเพื่อลดขยะเน็ต แต่ละรอบรอ 3 วิ
+        for i = 1, 5 do
+            if onStage.Value == targetMapName then return true end
             pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers[targetMapName])) end)
-            local success = SmartWait(function()
-                return onStage and onStage.Value == targetMapName
-            end, 2.0)
-            if success then return true end
+            local success = SmartWait(function() return onStage.Value == targetMapName end, 3.0)
+            if success then 
+                task.wait(0.5) -- รอเซิร์ฟเวอร์เรนเดอร์โมเดล
+                return true 
+            end
         end
     end
     return false
@@ -480,6 +470,11 @@ local function waitTraitChange(unitFolder, slotToRoll, oldVal, timeout)
         if newVal == "N/A" then newVal = safeGetVal(unitFolder, legacyNode) end
         return newVal ~= "N/A" and newVal ~= oldVal
     end, timeout or 3.0)
+end
+
+local function getBaseTraitName(name)
+    local b = string.match(name, "^(.-)%s+III$") or string.match(name, "^(.-)%s+II$") or string.match(name, "^(.-)%s+I$")
+    return b or name
 end
 
 local function getUiNameFromInternal(internalName)
@@ -646,7 +641,7 @@ Tabs.Unit:Toggle({
 })
 
 -- ==========================================
--- [Logic Loop: Auto Queue (Traits & Talents) Ultimate]
+-- [Logic Loop: Auto Queue (Traits & Talents) Ultimate Perfection]
 -- ==========================================
 task.spawn(function()
     while task.wait(0.1) do
@@ -690,7 +685,7 @@ task.spawn(function()
             local isDataLoading = false
             
             -- ===================================
-            -- [1] เช็คเงื่อนไข Traits (แม่นยำและห้ามซ้ำ ส่งแบบดิบเป๊ะๆ)
+            -- [1] เช็คเงื่อนไข Traits (แม่นยำ ห้ามซ้ำ ส่งแบบดิบเป๊ะๆ)
             -- ===================================
             local priIsGood = false
             local subIsGood = false
@@ -735,7 +730,7 @@ task.spawn(function()
                     end
                 end
                 
-                -- สร้างเป้าหมายส่ง Remote (ส่งชื่อที่มีเลขโรมันเข้าไปตรงๆ แบบออริจินัล)
+                -- สร้างเป้าหมายส่ง Remote (ส่งชื่อเต็มๆ แบบมีเลขโรมันเข้าไปตรงๆ)
                 if not traitsDone and not isDataLoading then
                     if priIsGood then slotToRoll = "Sub" end
                     
@@ -766,7 +761,7 @@ task.spawn(function()
             end
             
             -- ===================================
-            -- [2] เช็คเงื่อนไข Talents (อัปเกรด Once/Specific)
+            -- [2] เช็คเงื่อนไข Talents (เฉพาะช่องเป้าหมาย)
             -- ===================================
             local targetLayout = talent_check[targetTalentTier] and talent_check[targetTalentTier].layout or 0
             local highestCurrentLayout = 0
@@ -775,7 +770,9 @@ task.spawn(function()
             local oldValForRoll = nil
             
             if autoTalentsEnabled and #targetTalents > 0 then
-                -- หา highestCurrentLayout จาก "สเตตัสทั้งหมด 4 ช่อง"
+                local allTalentKeys = {"Damage", "Abilities_DMG", "Critical_Damage", "Speed"}
+                
+                -- หาค่าสูงสุดในตัวละคร (เช็คทั้ง 4 ช่อง)
                 for _, rStat in ipairs(allTalentKeys) do
                     local valStr = getRawStat(activeUnit, rStat)
                     if valStr == "N/A" then isDataLoading = true end
@@ -784,7 +781,7 @@ task.spawn(function()
                 end
 
                 local allTalentsGood = true
-                -- ตรวจสอบเฉพาะช่องเป้าหมายที่เราเลือก
+                -- ตรวจสอบเฉพาะเป้าหมายที่ผู้เล่นเลือกใน Dropdown
                 for _, uiTalent in ipairs(targetTalents) do
                     local remStatName = talentUIToRemote[uiTalent]
                     local valStrTarget = getRawStat(activeUnit, remStatName)
@@ -811,7 +808,7 @@ task.spawn(function()
             unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, true, activeUnitDisp, traitsDone, talentsDone))
             
             -- ===================================
-            -- [3] ทำงานส่ง Remote สลับคิวแบบฉลาด
+            -- [3] ทำงานส่ง Remote สลับคิวด้วย SmartWait
             -- ===================================
             if traitsDone and talentsDone then
                 unitStates[activeUnitDisp] = "done"
@@ -831,13 +828,13 @@ task.spawn(function()
                     
                 elseif not talentsDone then
                     if highestCurrentLayout < 16 then
-                        -- ถ้าไม่มี SSS เลย ให้สุ่ม "Once" ทั้งแผง
+                        -- ถ้าไม่มี SSS ให้สุ่ม Once เพื่อประหยัด
                         pcall(function()
                             RS:WaitForChild("Remotes"):WaitForChild("Systems"):WaitForChild("Potentials_Rolling"):FireServer(activeUnit.Name, "Reroll", "Once")
                         end)
                         task.wait(0.5)
                     elseif slotToRollTalent then
-                        -- ถ้ามี SSS แล้ว ล็อคเป้าสุ่มแค่ช่องนั้นช่องเดียว!
+                        -- ถ้ามี SSS แล้ว ล็อคเป้าช่องเป้าหมายเท่านั้น
                         pcall(function()
                             RS:WaitForChild("Remotes"):WaitForChild("Systems"):WaitForChild("Potentials_Rolling"):FireServer(activeUnit.Name, "Reroll", slotToRollTalent)
                         end)
@@ -1137,7 +1134,7 @@ local function setAutoAttackState(state)
     end)
 end
 
--- 🔒 [ล็อคฟังก์ชัน Damage Boost ขั้นเด็ดขาด]
+-- 🔒 [ล็อคฟังก์ชัน Damage Boost ขั้นเด็ดขาด แบบไม่แอบเปิด]
 SecGeneral.Section_DmgBoost:Toggle({
     Title = "Damage Boost", Value = false,
     Callback = function(state)
@@ -1174,7 +1171,7 @@ task.spawn(function()
     end
 end)
 
--- 🗡️ [Ultimate Master Loop for Damage Boost: ห้ามแอบตี 1,000,000%]
+-- 🗡️ [Ultimate Master Loop for Damage Boost]
 task.spawn(function()
     while true do
         if dmgBoostEnabled and isPremium then
@@ -1206,7 +1203,6 @@ task.spawn(function()
                 end
             end
         else
-            -- 🛑 ถ้ายกเลิก Toggle หรือไม่ใช่ Premium สคริปต์จะหยุดยิง Remote ถาวรตรงนี้
             task.wait(0.2) 
         end
     end
@@ -1228,7 +1224,6 @@ local function collectBoxes(others, checkFunc)
     end
     if not rewardsFolder then return end
 
-    -- รอจนกว่ากล่องจะเกิด
     SmartWait(function()
         if checkFunc and not checkFunc() then return true end
         return #rewardsFolder:GetChildren() > 0
@@ -1599,7 +1594,7 @@ task.spawn(function()
                 
                 attackMonster(targetMon, function() return autoRaidEnabled end)
             else
-                -- Smart Wait รอคลื่นใหม่
+                -- รอ Wave ถัดไป หรือรอว่าด่านจะจบ
                 SmartWait(function()
                     local nMobs, _ = countRaidMobs()
                     if nMobs > 0 then return true end
@@ -1611,7 +1606,7 @@ task.spawn(function()
                 if currentMobsAfterWait == 0 then
                     if rewardsReady() then collectBoxes(others, function() return autoRaidEnabled end) end
                     
-                    -- ⚔️ [Force Exit อัจฉริยะ (ย้ำ 10 รอบออกแน่นอน)]
+                    -- ⚔️ [Force Exit อัจฉริยะ (ย้ำ 10 รอบออกแน่นอนแบบ 100%)]
                     task.spawn(function()
                         for i = 1, 10 do
                             pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
