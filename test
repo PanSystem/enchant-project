@@ -35,7 +35,7 @@ local hideRerollEnabled, hideRewardEnabled = false, false
 local rewardNames = {"Reward", "Rewards", "RewardUI", "RewardsUI", "Reward_Visuals", "Rewards_Visuals", "Drops", "Drop"}
 
 -- ==========================================
--- [ ระบบ Anti AFK ]
+-- [ ระบบ Anti AFK (ป้องกันการโดนเตะเมื่ออยู่นิ่งนานๆ) ]
 -- ==========================================
 local VirtualUser = game:GetService("VirtualUser")
 LP.Idled:Connect(function()
@@ -98,6 +98,7 @@ local mapBuffers = {
     ["Reaper Society"]    = "\004\014\000Reaper Society"
 }
 
+-- [ Data Tables สำหรับ Traits และ Talents ]
 local trait_check = {
     ["Assault I"]="Assault_1",["Assault II"]="Assault_2",["Assault III"]="Assault_3",
     ["Genius I"]="Genius_1",  ["Genius II"]="Genius_2",  ["Genius III"]="Genius_3",
@@ -147,6 +148,7 @@ local talentUIToRemote = {
     ["Speed"] = "Speed"
 }
 
+-- สร้าง Lookup table สำหรับเช็ค Talents แบบแม่นยำสูงสุด
 local tVL = {}
 for g, d in pairs(talent_check) do
     for s, v in pairs(d.Status) do
@@ -219,7 +221,7 @@ local Window = WindUI:CreateWindow({
     Transparent  = true,
 })
 Window:CreateTopbarButton("DiscordButton", "message-circle-more", function() end, 990)
-
+Window:EditOpenButton({Title = "Open Enchant Hub",Icon = "monitor",CornerRadius = UDim.new(0,4),OnlyMobile = false,Enabled = true,Draggable = true,})
 local SecTab = {
     PremiumTabSection = Window:Section({Title = "Premium", Icon = "banknote-arrow-up", Opened = false}),
     MainTabSection    = Window:Section({Title = "General", Icon = "house",             Opened = false}),
@@ -253,6 +255,7 @@ local SecGeneral = {
     MiscFeatures     = Tabs.Misc:Section({Title = "Features", Opened = true}),
 }
 
+-- [ระบบ Fast Rerolls ใน Premium]
 local fastRerollEnabled = false
 SecGeneral.SecPremiumMisc:Toggle({
     Title = "Fast Reroll",
@@ -311,6 +314,24 @@ local function tweenToPosition(targetPos)
     return tween
 end
 
+-- [ฟังก์ชัน Smart Teleport: รับประกันการย้ายเซิร์ฟเวอร์แบบสมบูรณ์]
+local function smartTeleport(targetMapName)
+    local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
+    if not myData then return false end
+    
+    local onStage = myData:FindFirstChild("Data") and myData.Data:FindFirstChild("OnStage")
+    if onStage and onStage.Value == targetMapName then return true end
+
+    if mapBuffers[targetMapName] then
+        for i = 1, 15 do
+            if onStage.Value == targetMapName then return true end
+            pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers[targetMapName])) end)
+            task.wait(1.5)
+        end
+    end
+    return false
+end
+
 local function getMapFromEgg(eggName)
     if not eggName or eggName == "" then return "Lobby" end
     local lowerEgg = string.lower(eggName)
@@ -321,7 +342,6 @@ local function getMapFromEgg(eggName)
             return mapName
         end
     end
-    
     if string.find(lowerEgg, "namex") then return "Namex Planet" end
     if string.find(lowerEgg, "colosseum") then return "Colosseum Kingdom" end
     if string.find(lowerEgg, "demon") then return "Demon Forest" end
@@ -454,9 +474,21 @@ local function waitTraitChange(unitFolder, slotToRoll, oldVal, timeout)
     return false
 end
 
+-- ฟังก์ชันตัดเลขโรมันออกเพื่อใช้ในการสร้าง Lock Array ส่งไปให้เกม
 local function getBaseTraitName(name)
     local b = string.match(name, "^(.-)%s+III$") or string.match(name, "^(.-)%s+II$") or string.match(name, "^(.-)%s+I$")
     return b or name
+end
+
+-- ฟังก์ชันหาว่า Internal Name นี้ ตรงกับ UI Name อันไหน
+local function getUiNameFromInternal(internalName)
+    if not internalName or internalName == "N/A" then return nil end
+    for uiName, inName in pairs(trait_check) do
+        if inName == internalName then
+            return uiName
+        end
+    end
+    return nil
 end
 
 local autoTraitsEnabled = false
@@ -548,16 +580,18 @@ dropdowns.SelectInventoryUnits = Tabs.Unit:Dropdown({
     Callback = function(opts)
         local selectedOpts = opts or {}
         
-        for _, o in ipairs(selectedOpts) do
-            if not table.find(customQueue, o) then
-                table.insert(customQueue, o)
-                unitStates[o] = "waiting"
-            end
-        end
+        -- ลบตัวที่เอาติ๊กออก
         for i = #customQueue, 1, -1 do
             if not table.find(selectedOpts, customQueue[i]) then
                 unitStates[customQueue[i]] = nil
                 table.remove(customQueue, i)
+            end
+        end
+        -- เพิ่มตัวใหม่
+        for _, o in ipairs(selectedOpts) do
+            if not table.find(customQueue, o) then
+                table.insert(customQueue, o)
+                unitStates[o] = "waiting"
             end
         end
         
@@ -614,7 +648,7 @@ Tabs.Unit:Toggle({
 })
 
 -- ==========================================
--- [Logic Loop: Auto Queue (Traits & Talents) Ultimate]
+-- [Logic Loop: Auto Queue (Traits & Talents) Ultimate Perfection]
 -- ==========================================
 task.spawn(function()
     while task.wait(0.1) do
@@ -657,7 +691,9 @@ task.spawn(function()
             local targetBuffsClean = {}
             local isDataLoading = false
             
-            -- [1] เช็คเงื่อนไข Traits (แม่นยำด้วย Internal Target + ห้ามซ้ำ)
+            -- ===================================
+            -- [1] เช็คเงื่อนไข Traits (แม่นยำและห้ามซ้ำ)
+            -- ===================================
             local priIsGood = false
             local subIsGood = false
             local slotToRoll = "Primary"
@@ -681,17 +717,18 @@ task.spawn(function()
                 if internalTargets[currentSub] then subIsGood = true end
                 
                 if #targetTraits == 1 then
-                    -- เลือก 1 บัฟ : ต้องเหมือนกัน 2 ช่อง
-                    if priIsGood and subIsGood then
+                    -- กรณีเลือก 1 บัฟ: ต้องได้บัฟนี้ทั้ง 2 ช่อง (Primary และ Sub)
+                    if priIsGood and subIsGood and currentPri == currentSub then
                         traitsDone = true
                     else
                         traitsDone = false
                     end
                 else
-                    -- เลือกหลายบัฟ : ต้องตรงเป้าหมาย และ ห้ามซ้ำ
+                    -- กรณีเลือก >= 2 บัฟ: ต้องได้บัฟเป้าหมาย และต้องห้ามซ้ำกัน
                     if priIsGood and subIsGood then
                         if currentPri == currentSub then
-                            subIsGood = false -- ถ้าซ้ำกัน บังคับสุ่ม Sub ทิ้ง
+                            -- ถ้าบัฟซ้ำกัน มองว่า Sub ไม่ผ่าน เพื่อบังคับให้สุ่ม Sub ทิ้ง
+                            subIsGood = false 
                             traitsDone = false
                         else
                             traitsDone = true
@@ -701,13 +738,19 @@ task.spawn(function()
                     end
                 end
                 
-                -- สร้างเป้าหมายส่ง Remote โดยคัดบัฟที่ได้ไปแล้วออก เพื่อบังคับห้ามซ้ำ
+                -- สร้างเป้าหมายส่ง Remote (Array ล็อคบัฟ)
                 if not traitsDone and not isDataLoading then
                     if priIsGood then slotToRoll = "Sub" end
-                    local otherSlotVal = (slotToRoll == "Primary") and currentSub or currentPri
+                    
+                    -- หาว่าอีกช่องมีบัฟอะไรอยู่แล้ว เพื่อจะได้ไม่ล็อคบัฟซ้ำเข้าไปใน Array ของการสุ่ม
+                    local uiNameOfGoodSlot = nil
+                    if slotToRoll == "Sub" and priIsGood then
+                        uiNameOfGoodSlot = getUiNameFromInternal(currentPri)
+                    elseif slotToRoll == "Primary" and subIsGood then
+                        uiNameOfGoodSlot = getUiNameFromInternal(currentSub)
+                    end
 
                     for _, uiTraitName in ipairs(targetTraits) do
-                        local internal = trait_check[uiTraitName]
                         local cleanName = getBaseTraitName(uiTraitName)
 
                         if #targetTraits == 1 then
@@ -715,7 +758,8 @@ task.spawn(function()
                                 table.insert(targetBuffsClean, cleanName)
                             end
                         else
-                            if internal ~= otherSlotVal then
+                            -- ใส่บัฟทั้งหมดลงไป ยกเว้นบัฟที่ได้ไปแล้วในอีกช่อง (ป้องกันการสุ่มซ้ำเป้าหมายเดิม)
+                            if uiNameOfGoodSlot ~= uiTraitName then
                                 if not table.find(targetBuffsClean, cleanName) then
                                     table.insert(targetBuffsClean, cleanName)
                                 end
@@ -727,7 +771,9 @@ task.spawn(function()
                 traitsDone = true
             end
             
+            -- ===================================
             -- [2] เช็คเงื่อนไข Talents
+            -- ===================================
             local targetLayout = talent_check[targetTalentTier] and talent_check[targetTalentTier].layout or 0
             local highestCurrentLayout = 0
             local statsLayouts = {}
@@ -760,6 +806,7 @@ task.spawn(function()
                 talentsDone = true
             end
             
+            -- ป้องกันการส่งคำสั่งสุ่มซ้ำซ้อนขณะเกมกำลังโหลดค่าใหม่
             if isDataLoading then
                 unitInfoParagraph:SetDesc("Loading Unit Data... Please Wait.")
                 continue
@@ -767,11 +814,13 @@ task.spawn(function()
             
             unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, true, activeUnitDisp, traitsDone, talentsDone))
             
-            -- [3] ทำงานส่ง Remote (ข้ามคิวเมื่อสำเร็จ)
+            -- ===================================
+            -- [3] ทำงานส่ง Remote สลับคิว
+            -- ===================================
             if traitsDone and talentsDone then
                 unitStates[activeUnitDisp] = "done"
                 unitInfoParagraph:SetDesc(getUnitInfoText(activeUnit, false, activeUnitDisp, true, true))
-                task.wait(1) 
+                task.wait(0.5) 
             else
                 if not traitsDone then
                     local oldTraitVal = slotToRoll == "Primary" and safeGetNestedVal(activeUnit, "Traits", "Primary") or safeGetNestedVal(activeUnit, "Traits", "Sub")
@@ -804,7 +853,7 @@ end)
 
 
 -- ==========================================
--- [UI Tab : Hide Reroll / Reward (คืนค่าเป๊ะ 100%)]
+-- [UI Tab : Hide Reroll / Reward (คืนค่าได้ 100%)]
 -- ==========================================
 SecGeneral.MiscFeatures:Toggle({
     Title = "Hide Reroll",
@@ -961,10 +1010,7 @@ task.spawn(function()
             local currentStage = myData and myData:FindFirstChild("Data") and myData.Data:FindFirstChild("OnStage") and myData.Data.OnStage.Value or ""
 
             if targetWorld and targetWorld ~= "" and currentStage ~= targetWorld then
-                if mapBuffers[targetWorld] then
-                    pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers[targetWorld])) end)
-                    task.wait(3)
-                end
+                if not smartTeleport(targetWorld) then task.wait(1) end
                 continue
             end
 
@@ -1054,7 +1100,7 @@ Tabs.Teleport:Button({
     Title = "Teleport",
     Callback = function()
         if mapBuffers[selectedWarpMap] then
-            pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers[selectedWarpMap])) end)
+            smartTeleport(selectedWarpMap)
         end
     end
 })
@@ -1365,7 +1411,6 @@ end
 local function attackMonster(targetMon, enabledCheckFunc)
     local activeTween = nil
     while targetMon.Humanoid.Health > 0 and targetMon.Model.Parent == Server do
-        -- Smart Break: ถ้ากดปิด Toggle จะหลุดลูปทันที!
         if enabledCheckFunc and not enabledCheckFunc() then break end
 
         local char = LP.Character
@@ -1446,8 +1491,7 @@ task.spawn(function()
         -- [ ระบบ Auto Rift ทะลวงกำแพง: ออก Raid ทันทีถ้า Rift มา ]
         if autoRiftEnabled and riftSpawned then
             if currentlyInRaid then
-                pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
-                task.wait(4)
+                smartTeleport("Lobby")
                 continue
             end
             
@@ -1493,10 +1537,7 @@ task.spawn(function()
                                 end
                             end
                         end
-                        if onStageVal.Value ~= "Lobby" then
-                            pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
-                            task.wait(3)
-                        end
+                        smartTeleport("Lobby")
                         riftStarted = false
                     end
                 end
@@ -1508,10 +1549,8 @@ task.spawn(function()
                     end
 
                     if not isReaperMap then
-                        pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
-                        task.wait(2)
-                        pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Reaper Society"])) end)
-                        task.wait(3)
+                        smartTeleport("Lobby")
+                        smartTeleport("Reaper Society")
                     else
                         for _, riftModel in ipairs(spawnedRiftsFolder:GetChildren()) do
                             while autoRiftEnabled and riftModel.Parent ~= nil do
@@ -1571,7 +1610,7 @@ task.spawn(function()
                     local stillIn = false
                     if raidsVisual then
                         for _, f in ipairs(raidsVisual:GetChildren()) do
-                            if not string.find(f.Name, "Rift") and (string.find(f.Name, "Server_"..LP.Name) or string.find(f.Name, "Clients_"..LP.Name)) then
+                            if not string.find(f.Name, "Rift") and (string.match(f.Name, "Server_"..LP.Name) or string.match(f.Name, "Clients_"..LP.Name)) then
                                 stillIn = true; break
                             end
                         end
@@ -1584,8 +1623,8 @@ task.spawn(function()
 
                 if not raidStarted then
                     if rewardsReady() then collectBoxes(others, function() return autoRaidEnabled end) end
-                    pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
-                    task.wait(5); raidStarted = false; currentRaidFolder = nil
+                    smartTeleport("Lobby")
+                    raidStarted = false; currentRaidFolder = nil
                     continue
                 end
             end
@@ -1611,13 +1650,8 @@ task.spawn(function()
                 while os.clock() < waveWaitDl and autoRaidEnabled and currentlyInRaid do
                     task.wait(0.5)
                     local nMobs, _ = countRaidMobs()
-                    if nMobs > 0 then
-                        break 
-                    end
-                    if rewardsReady() then
-                        raidEnded = true 
-                        break
-                    end
+                    if nMobs > 0 then break end
+                    if rewardsReady() then raidEnded = true break end
                 end
 
                 local currentMobsAfterWait, _ = countRaidMobs()
@@ -1626,14 +1660,16 @@ task.spawn(function()
                         collectBoxes(others, function() return autoRaidEnabled end) 
                     end
                     
-                    -- [Force Exit System ขั้นสุดยอด: ย้ำวาร์ปกลับลอบบี้และ Leave ทันที 100%]
-                    for i = 1, 10 do
-                        pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
-                        pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer("Leave") end)
-                        task.wait(1.5)
-                        local curSt = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name) and RS.Players_Data[LP.Name]:FindFirstChild("Data") and RS.Players_Data[LP.Name].Data:FindFirstChild("OnStage")
-                        if curSt and curSt.Value == "Lobby" then break end
-                    end
+                    -- [Force Exit System ขั้นสุดยอด: ย้ำวาร์ปกลับลอบบี้และ Leave รัวๆ]
+                    task.spawn(function()
+                        for i = 1, 10 do
+                            pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
+                            pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer("Leave") end)
+                            task.wait(1.5)
+                            local curSt = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name) and RS.Players_Data[LP.Name]:FindFirstChild("Data") and RS.Players_Data[LP.Name].Data:FindFirstChild("OnStage")
+                            if curSt and curSt.Value == "Lobby" then break end
+                        end
+                    end)
                     
                     raidStarted = false
                     currentRaidFolder = nil
@@ -1642,8 +1678,7 @@ task.spawn(function()
 
         elseif autoAbandonVillageEnabled and bossSpawned then
             if currentStage ~= "Demon Forest" then
-                pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Demon Forest"])) end)
-                task.wait(2)
+                smartTeleport("Demon Forest")
             else
                 local bossUI = LP.PlayerGui:FindFirstChild("Gamemodes") and LP.PlayerGui.Gamemodes:FindFirstChild("BossFight")
                 if not (bossUI and bossUI.Visible == true) then
@@ -1674,8 +1709,7 @@ task.spawn(function()
         elseif autoRaidEnabled and not currentlyInRaid then
             if selectedRaidMap == "Double Dungeons" then
                 if currentStage ~= "Dungeons Town" then
-                    pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Dungeons Town"])) end)
-                    task.wait(2)
+                    smartTeleport("Dungeons Town")
                 else
                     local raidsEntering = workspace:FindFirstChild("Raids_Entering")
                     if raidsEntering then
@@ -1695,8 +1729,7 @@ task.spawn(function()
                 end
             else
                 if currentStage ~= "Lobby" then
-                    pcall(function() ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"])) end)
-                    task.wait(2)
+                    smartTeleport("Lobby")
                 else
                     local raidsEntering = workspace:FindFirstChild("Raids_Entering")
                     if raidsEntering then
