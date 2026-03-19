@@ -1,293 +1,2211 @@
-local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
+repeat task.wait() until game:IsLoaded()
+
+local isPremium, allowedGameIds, hwid = ...
+
 local Players = game:GetService("Players")
-local CoreGui = pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui") or Players.LocalPlayer:WaitForChild("PlayerGui")
+local LP = Players.LocalPlayer
 
-local AUTH_URL = "https://pastebin.com/raw/jh6FYTeK"
-local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/PanSystem/enchant-project/refs/heads/main/Test-Enchant-Hub"
+-- ==========================================
+-- [ 👑 OWNER & SECURITY AUTHENTICATION ]
+-- ==========================================
+local ownerHWID = "86BB539D-F74A-4CAA-A6BC-B1DC0AA97653"
+local safeHwid = type(hwid) == "string" and string.gsub(hwid, "%s+", "") or ""
 
-if CoreGui:FindFirstChild("EnchantHubLoader") then 
-    CoreGui.EnchantHubLoader:Destroy() 
-end
-
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "EnchantHubLoader"
-ScreenGui.IgnoreGuiInset = true
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = CoreGui
-
-local Background = Instance.new("Frame")
-Background.Size = UDim2.new(1, 0, 1, 0)
-Background.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-Background.BackgroundTransparency = 1
-Background.Parent = ScreenGui
-
-local BgGradient = Instance.new("UIGradient")
-BgGradient.Color = ColorSequence.new{
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(4, 2, 8)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(20, 10, 35)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(5, 2, 10))
-}
-BgGradient.Rotation = 90
-BgGradient.Parent = Background
-
-local CenterGroup = Instance.new("Frame")
-CenterGroup.Size = UDim2.new(0, 600, 0, 600)
-CenterGroup.Position = UDim2.new(0.5, 0, 0.53, 0)
-CenterGroup.AnchorPoint = Vector2.new(0.5, 0.5)
-CenterGroup.BackgroundTransparency = 1
-CenterGroup.Parent = Background
-
-local Ring1 = Instance.new("Frame")
-Ring1.Size = UDim2.new(0, 320, 0, 320)
-Ring1.Position = UDim2.new(0.5, 0, 0.4, 0)
-Ring1.AnchorPoint = Vector2.new(0.5, 0.5)
-Ring1.BackgroundTransparency = 1
-Ring1.Parent = CenterGroup
-
-Instance.new("UICorner", Ring1).CornerRadius = UDim.new(1, 0)
-
-local Stroke1 = Instance.new("UIStroke", Ring1)
-Stroke1.Color = Color3.fromRGB(150, 80, 255)
-Stroke1.Thickness = 0.8
-Stroke1.Transparency = 1
-
-local Grad1 = Instance.new("UIGradient", Stroke1)
-Grad1.Transparency = NumberSequence.new{
-    NumberSequenceKeypoint.new(0, 1), 
-    NumberSequenceKeypoint.new(0.5, 0.2), 
-    NumberSequenceKeypoint.new(1, 1)
-}
-
-local Ring2 = Ring1:Clone()
-Ring2.Size = UDim2.new(0, 290, 0, 290)
-Ring2.Parent = CenterGroup
-Ring2.UIStroke.Color = Color3.fromRGB(200, 150, 255)
-Ring2.UIStroke.Thickness = 1.5
-
-local Ring3 = Ring1:Clone()
-Ring3.Size = UDim2.new(0, 260, 0, 260)
-Ring3.Parent = CenterGroup
-Ring3.UIStroke.Color = Color3.fromRGB(255, 255, 255)
-Ring3.UIStroke.Thickness = 0.5
-
-if Ring3.UIStroke:FindFirstChild("UIGradient") then 
-    Ring3.UIStroke.UIGradient:Destroy() 
-end
-
-local LogoGlow = Instance.new("ImageLabel")
-LogoGlow.Size = UDim2.new(0, 220, 0, 220)
-LogoGlow.Position = UDim2.new(0.5, 0, 0.4, 0)
-LogoGlow.AnchorPoint = Vector2.new(0.5, 0.5)
-LogoGlow.BackgroundTransparency = 1
-LogoGlow.Image = "rbxthumb://type=Asset&id=124172395181450&w=420&h=420"
-LogoGlow.ImageColor3 = Color3.fromRGB(180, 100, 255)
-LogoGlow.ImageTransparency = 1
-LogoGlow.Parent = CenterGroup
-
-local Logo = Instance.new("ImageLabel")
-Logo.Size = UDim2.new(0, 160, 0, 160)
-Logo.Position = UDim2.new(0.5, 0, 0.4, 0)
-Logo.AnchorPoint = Vector2.new(0.5, 0.5)
-Logo.BackgroundTransparency = 1
-Logo.Image = "rbxthumb://type=Asset&id=124172395181450&w=420&h=420"
-Logo.ImageTransparency = 1
-Logo.Parent = CenterGroup
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 50)
-Title.Position = UDim2.new(0.5, 0, 0.7, 0)
-Title.AnchorPoint = Vector2.new(0.5, 0.5)
-Title.BackgroundTransparency = 1
-Title.Font = Enum.Font.GothamBlack
-Title.RichText = true
-Title.Text = '<b><font color="#ffffff">ENCHANT</font></b> <font color="#b88dff">HUB</font>'
-Title.TextSize = 42
-Title.TextTransparency = 1
-Title.Parent = CenterGroup
-
-local Subtitle = Instance.new("TextLabel")
-Subtitle.Size = UDim2.new(1, 0, 0, 20)
-Subtitle.Position = UDim2.new(0.5, 0, 0.77, 0)
-Subtitle.AnchorPoint = Vector2.new(0.5, 0.5)
-Subtitle.BackgroundTransparency = 1
-Subtitle.Font = Enum.Font.GothamMedium
-Subtitle.Text = "S E C U R E   L O A D E R"
-Subtitle.TextColor3 = Color3.fromRGB(150, 140, 180)
-Subtitle.TextSize = 11
-Subtitle.TextTransparency = 1
-Subtitle.Parent = CenterGroup
-
-local BarBack = Instance.new("Frame")
-BarBack.Size = UDim2.new(0.5, 0, 0, 2)
-BarBack.Position = UDim2.new(0.5, 0, 0.88, 0)
-BarBack.AnchorPoint = Vector2.new(0.5, 0.5)
-BarBack.BackgroundColor3 = Color3.fromRGB(30, 20, 45)
-BarBack.BackgroundTransparency = 1
-BarBack.Parent = CenterGroup
-
-Instance.new("UICorner", BarBack).CornerRadius = UDim.new(1, 0)
-
-local BarFill = Instance.new("Frame")
-BarFill.Size = UDim2.new(0, 0, 1, 0)
-BarFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-BarFill.BackgroundTransparency = 1
-BarFill.Parent = BarBack
-
-local FillGrad = Instance.new("UIGradient", BarFill)
-FillGrad.Color = ColorSequence.new{
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 60, 255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 150, 255))
-}
-
-local StatusText = Instance.new("TextLabel")
-StatusText.Size = UDim2.new(1, 0, 0, 20)
-StatusText.Position = UDim2.new(0.5, 0, 0.93, 0)
-StatusText.AnchorPoint = Vector2.new(0.5, 0.5)
-StatusText.BackgroundTransparency = 1
-StatusText.Font = Enum.Font.Gotham
-StatusText.Text = "Initializing UI..."
-StatusText.TextColor3 = Color3.fromRGB(200, 190, 220)
-StatusText.TextSize = 13
-StatusText.TextTransparency = 1
-StatusText.Parent = CenterGroup
-
-local Blur = Instance.new("BlurEffect")
-Blur.Size = 0
-Blur.Parent = Lighting
-
-local isRunning = true
-
-local function tween(obj, info, props)
-    local t = TweenService:Create(obj, info, props)
-    t:Play()
-    return t
-end
-
-local function smoothText(text, delayParam)
-    StatusText.Text = ""
-    local tLen = string.len(text)
-    local d = delayParam or (0.5 / tLen)
-    for i = 1, tLen do
-        if not isRunning then break end
-        StatusText.Text = string.sub(text, 1, i) .. "_"
-        task.wait(d)
+if safeHwid == ownerHWID then
+    isPremium = true
+elseif safeHwid == "" then
+    if LP then 
+        LP:Kick("❌ Access Denied ❌\nEnchant Hub Security\ndiscord.gg/jUeYgfrrPC") 
     end
-    if isRunning then 
-        StatusText.Text = text 
-    end
+    while true do task.wait() end 
+    return
 end
 
-local rotConn = RunService.RenderStepped:Connect(function(dt)
-    if Ring1.Parent then
-        Ring1.Rotation = Ring1.Rotation + (12 * dt)
-        Ring2.Rotation = Ring2.Rotation - (18 * dt)
-        Ring3.Rotation = Ring3.Rotation + (6 * dt)
+-- ==========================================
+-- [ SERVICES & VARIABLES ]
+-- ==========================================
+local RS = game:GetService("ReplicatedStorage")
+local TS = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local TeleportService = game:GetService("TeleportService")
+
+local Worlds = Workspace:WaitForChild("Worlds")
+local Targets = Worlds:WaitForChild("Targets") -- ★ แก้ไขเป็น Worlds:WaitForChild อย่างถูกต้อง
+local Clients = Targets:WaitForChild("Clients")
+local Server = Targets:WaitForChild("Server")
+local UnitsServer = Worlds:WaitForChild("Units"):WaitForChild("Server")
+
+local Remotes = RS:WaitForChild("Remotes")
+local RequestReq = Remotes:WaitForChild("Gameplays"):WaitForChild("Request")
+local ByteNetReq = RS:WaitForChild("ByteNetReliable")
+local Gamblings = Remotes:WaitForChild("Gamblings", 10)
+local Systems = Remotes:WaitForChild("Systems", 10)
+
+local scriptStartTime = os.clock()
+local currentActivity = "Idle / Standing By"
+
+-- Session Counters
+local raidCount = 0
+local abandonVillageCount = 0
+local riftCount = 0
+local sukunaCount = 0
+
+local UI_Elements = {}
+local dropdowns, monsterList, modelNameToDisplay, selectedMonsters = {}, {}, {}, {}
+local autoFarmEnabled, autoClickEnabled, farmMode, tweenSpeed = false, false, "Tp", 0.5
+local dmgBoostEnabled, safeDmgBoostEnabled, pauseDmgBoost = false, false, false
+local dmgBoostCooldown, safeDpsLimit = 0.05, 3500000
+
+local autoRiftEnabled, autoAbandonVillageEnabled, autoRaidEnabled = false, false, false
+local autoReplayEnabled, autoLeaveEnabled = false, false
+local autoCursedFingerEnabled = false 
+local autoDragonBallEnabled = false 
+local autoSukunaEnabled = false 
+local fpsBoostEnabled = false 
+local fpsBoostConnection = nil 
+
+local antiAfkEnabled = true
+
+local webhookUrl = ""
+local webhookEnabled = false
+local rollbackEnabled = false
+
+local selectedWarpMap = "Lobby"
+local selectedRaidMap, selectedRaidDifficulty, collectPurpleChest = "", "Easy", "No"
+local raidMapsList = {}
+
+local currentRiftFolder, riftStarted = nil, false
+local currentRaidFolder, raidStarted = nil, false
+local hasTeleportedToLobbyForRift = false
+local raidCollecting = false 
+local raidExiting = false  
+local raidChestDone = false  
+local raidTransitionTime = 0 
+local padConfirmedTime = 0 
+
+local hideRerollEnabled, hideRewardEnabled, fastRerollEnabled = false, false, false
+local inventoryUnitsList, inventoryUnitsMap = {}, {}
+local targetTraits, targetTalents, targetTalentTier = {}, {}, "A"
+local autoTraitsEnabled, autoTalentsEnabled = false, false
+local selectedInventoryUnits, unitStates = {}, {}
+
+local autoFeedSelectedEnabled, autoFeedAllEnabled = false, false
+local selectedFeedUnits = {}
+
+local attackBuffer = buffer.fromstring("\026\000")
+local clickBuffer = buffer.fromstring("\015")
+local lastAttackTime = 0
+local lastClickTime = 0
+
+local ConfigName = "Enchant_Hub_Config.json"
+local autoSaveConfig, autoLoadConfig = false, false
+
+-- ==========================================
+-- [ ULTIMATE MAX LEVEL ANTI-AFK ]
+-- ==========================================
+task.spawn(function()
+    LP.Idled:Connect(function()
+        if antiAfkEnabled then
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new())
+                VirtualUser:Button2Down(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
+                task.wait(0.2)
+                VirtualUser:Button2Up(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
+            end)
+        end
+    end)
+
+    while task.wait(180) do
+        if antiAfkEnabled then
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new())
+                VirtualUser:Button2Down(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
+                task.wait(0.2)
+                VirtualUser:Button2Up(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
+            end)
+        end
     end
 end)
 
-local smoothIntro = TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-
-task.spawn(function()
-    tween(Background, smoothIntro, {BackgroundTransparency = 0})
-    tween(Blur, smoothIntro, {Size = 25})
-    tween(CenterGroup, smoothIntro, {Position = UDim2.new(0.5, 0, 0.48, 0)})
-    
-    tween(Stroke1, smoothIntro, {Transparency = 0.3})
-    tween(Ring2.UIStroke, smoothIntro, {Transparency = 0.5})
-    tween(Ring3.UIStroke, smoothIntro, {Transparency = 0.8})
-    
-    tween(Logo, smoothIntro, {ImageTransparency = 0})
-    tween(LogoGlow, smoothIntro, {ImageTransparency = 0.4})
-    tween(Title, smoothIntro, {TextTransparency = 0})
-    tween(Subtitle, smoothIntro, {TextTransparency = 0})
-    
-    tween(BarBack, smoothIntro, {BackgroundTransparency = 0.5})
-    tween(BarFill, smoothIntro, {BackgroundTransparency = 0})
-    tween(StatusText, smoothIntro, {TextTransparency = 0})
-    
-    task.spawn(function()
-        while isRunning and Logo.Parent do
-            tween(Logo, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Position = UDim2.new(0.5, 0, 0.38, 0)})
-            tween(LogoGlow, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Position = UDim2.new(0.5, 0, 0.38, 0)}).Completed:Wait()
-            
-            if not isRunning then break end
-            
-            tween(Logo, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Position = UDim2.new(0.5, 0, 0.42, 0)})
-            tween(LogoGlow, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Position = UDim2.new(0.5, 0, 0.42, 0)}).Completed:Wait()
-        end
-    end)
-    
-    task.wait(1)
-
-    smoothText("Fetching Client HWID...")
-    tween(BarFill, TweenInfo.new(1, Enum.EasingStyle.Quint), {Size = UDim2.new(0.4, 0, 1, 0)})
-    
-    local hwid = ""
-    local success, result = pcall(function() 
-        return game:GetService("RbxAnalyticsService"):GetClientId() 
-    end)
-    
-    if success and result then 
-        hwid = result 
-    elseif gethwid then 
-        hwid = gethwid() 
+-- ==========================================
+-- [ WEBHOOK NOTIFIER SYSTEM ]
+-- ==========================================
+local function FormatNumber(n)
+    local formatted = tostring(n)
+    while true do
+        local k
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+        if k == 0 then break end
     end
-    
-    task.wait(0.5)
+    return formatted
+end
 
-    smoothText("Verifying Access Tier...")
-    tween(BarFill, TweenInfo.new(1.5, Enum.EasingStyle.Quint), {Size = UDim2.new(0.8, 0, 1, 0)})
-    
-    local isPremium = false
-    local allowedGameIds = {"ALL"}
+local function SendWebhook()
+    if not webhookEnabled or webhookUrl == "" then return end
+    local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+    if not req then return end
 
-    local reqSuccess, reqErr = pcall(function()
-        local authCheck = loadstring(game:HttpGet(AUTH_URL))()
-        isPremium, allowedGameIds = authCheck(hwid)
-    end)
+    local elapsed = os.clock() - scriptStartTime
+    local hrs = math.floor(elapsed / 3600)
+    local mins = math.floor((elapsed % 3600) / 60)
+    local secs = math.floor(elapsed % 60)
+    local timeStr = string.format("%02d:%02d:%02d", hrs, mins, secs)
 
-    if reqSuccess and isPremium then
-        StatusText.TextColor3 = Color3.fromRGB(180, 255, 180)
-        smoothText("Premium Access Granted.")
-    else
-        isPremium = false
-        StatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
-        smoothText("Free Version Initialized.")
-        pcall(function() setclipboard(hwid) end)
-    end
+    local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
+    local yen = myData and myData:FindFirstChild("Data") and myData.Data:FindFirstChild("Yen") and myData.Data.Yen.Value or 0
+    local gems = myData and myData:FindFirstChild("Data") and myData.Data:FindFirstChild("Gems") and myData.Data.Gems.Value or 0
 
-    tween(BarFill, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {Size = UDim2.new(1, 0, 1, 0)})
-    task.wait(0.8)
-    
-    isRunning = false
-    rotConn:Disconnect()
+    local embed = {
+        ["title"] = "Anime Tactical Simulator",
+        ["color"] = tonumber("0x8a2be2"),
+        ["thumbnail"] = {
+            ["url"] = "https://cdn.discordapp.com/attachments/1066799015112151090/1183350221379768390/328221c59bb7e3cf8622c7eb16cde461.png"
+        },
+        ["image"] = {
+            ["url"] = "https://www.roblox.com/asset-thumbnail/image?assetId="..game.PlaceId.."&width=768&height=432&format=png"
+        },
+        ["fields"] = {
+            {["name"] = "👤 Player Info", ["value"] = "**Username:** ||" .. LP.Name .. "||\n**Execute Time:** " .. timeStr, ["inline"] = true},
+            {["name"] = "💰 Currencies", ["value"] = "**Yen:** " .. FormatNumber(yen) .. "\n**Gems:** " .. FormatNumber(gems), ["inline"] = true},
+            {["name"] = "📊 Match Statistics", ["value"] = "⚔️ **Raid Count:** " .. tostring(raidCount) .. "\n🏚️ **Abandon Village Count:** " .. tostring(abandonVillageCount) .. "\n🌀 **Rift Count:** " .. tostring(riftCount) .. "\n👹 **Sukuna Count:** " .. tostring(sukunaCount), ["inline"] = false}
+        },
+        ["footer"] = {
+            ["text"] = "By Enchant Hub |",
+            ["icon_url"] = "https://cdn.discordapp.com/attachments/1066799015112151090/1183350221379768390/328221c59bb7e3cf8622c7eb16cde461.png"
+        },
+        ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
+    }
 
-    local fastOut = TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-    
-    tween(CenterGroup, fastOut, {Size = UDim2.new(0, 650, 0, 650), Position = UDim2.new(0.5, 0, 0.45, 0)})
-    tween(Stroke1, fastOut, {Transparency = 1})
-    tween(Ring2.UIStroke, fastOut, {Transparency = 1})
-    tween(Ring3.UIStroke, fastOut, {Transparency = 1})
-    tween(Logo, fastOut, {ImageTransparency = 1, Size = UDim2.new(0, 200, 0, 200)})
-    tween(LogoGlow, fastOut, {ImageTransparency = 1})
-    tween(Title, fastOut, {TextTransparency = 1})
-    tween(Subtitle, fastOut, {TextTransparency = 1})
-    tween(BarBack, fastOut, {BackgroundTransparency = 1})
-    tween(BarFill, fastOut, {BackgroundTransparency = 1})
-    tween(StatusText, fastOut, {TextTransparency = 1})
-    
-    task.wait(0.4)
-    tween(Background, TweenInfo.new(0.8, Enum.EasingStyle.Sine), {BackgroundTransparency = 1})
-    tween(Blur, TweenInfo.new(0.8, Enum.EasingStyle.Sine), {Size = 0})
-    
-    task.wait(1)
-    ScreenGui:Destroy()
-    Blur:Destroy()
+    local payload = HttpService:JSONEncode({
+        ["username"] = "Enchant Hub | Notification",
+        ["avatar_url"] = "https://cdn.discordapp.com/attachments/1066799015112151090/1183350221379768390/328221c59bb7e3cf8622c7eb16cde461.png",
+        ["embeds"] = {embed}
+    })
 
     pcall(function()
-        loadstring(game:HttpGet(MAIN_SCRIPT_URL))(isPremium, allowedGameIds, hwid)
+        req({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = payload
+        })
     end)
+end
+
+-- ==========================================
+-- [ VICTORY COUNTER TRACKER ]
+-- ==========================================
+local wasVictoryVisible = false
+task.spawn(function()
+    while task.wait(1) do
+        local vUI = LP.PlayerGui:FindFirstChild("Victory")
+        if vUI and vUI:IsA("ScreenGui") and vUI.Enabled then
+            if not wasVictoryVisible then
+                wasVictoryVisible = true
+                local act = string.lower(currentActivity)
+                
+                if string.find(act, "raid") then raidCount = raidCount + 1
+                elseif string.find(act, "abandon") then abandonVillageCount = abandonVillageCount + 1
+                elseif string.find(act, "rift") then riftCount = riftCount + 1
+                elseif string.find(act, "sukuna") then sukunaCount = sukunaCount + 1
+                end
+
+                if webhookEnabled then SendWebhook() end
+            end
+        else
+            wasVictoryVisible = false
+        end
+    end
+end)
+
+-- ==========================================
+-- [ CORE TABLES & ARRAYS ]
+-- ==========================================
+local mapBuffers = {
+    ["Lobby"] = "\005\005\000Lobby\004\005\000Lobby",
+    ["Namex Planet"] = "\004\f\000Namex Planet",
+    ["Colosseum Kingdom"] = "\004\017\000Colosseum Kingdom",
+    ["Demon Forest"] = "\004\f\000Demon Forest",
+    ["Dungeons Town"] = "\004\r\000Dungeons Town",
+    ["Reaper Society"] = "\004\014\000Reaper Society",
+    ["Jujutsu Highschool"] = "\004\018\000Jujutsu Highschool"
+}
+
+local trait_check = {
+    ["Assault I"]="Assault_1",["Assault II"]="Assault_2",["Assault III"]="Assault_3",
+    ["Genius I"]="Genius_1",["Genius II"]="Genius_2",["Genius III"]="Genius_3",
+    ["Captain I"]="Captain_1",["Captain II"]="Captain_2",["Captain III"]="Captain_3",
+    ["Rich I"]="Rich_1",["Rich II"]="Rich_2",["Rich III"]="Rich_3",
+    ["Lucky I"]="Lucky_1",["Lucky II"]="Lucky_2",["Lucky III"]="Lucky_3",
+    ["Speed I"]="Speed_1",["Speed II"]="Speed_2",["Speed III"]="Speed_3",
+    ["Slowpoke I"]="Slowpoke_1",["Executor I"]="Executor_1",["Sniper I"]="Sniper_1",
+    ["Tiny I"]="Tiny_1",["Abnormal I"]="Abnormal_1",["Kingslayer I"]="Kingslayer_1",
+    ["Fortunate I"]="Fortunate_1",["Annihilator I"]="Annihilator_1",
+    ["CEO I"]="CEO_1",["Leader I"]="Leader_1",["Deadeye I"]="Deadeye_1",
+    ["Prodigy I"]="Prodigy_1",["Godspeed I"]="Godspeed_1",["Archmage I"]="Archmage_1",
+    ["Extremist I"]="Extremist_1",["Gods Blessing I"]="Gods_Blessing_1"
+}
+
+local traits = {
+    "Assault I","Assault II","Assault III","Genius I","Genius II","Genius III",
+    "Captain I","Captain II","Captain III","Rich I","Rich II","Rich III",
+    "Lucky I","Lucky II","Lucky III","Speed I","Speed II","Speed III",
+    "Slowpoke I","Executor I","Sniper I","Tiny I","Abnormal I","Kingslayer I",
+    "Fortunate I","Annihilator I","CEO I","Leader I","Deadeye I","Prodigy I",
+    "Godspeed I","Archmage I","Extremist I","Gods Blessing I"
+}
+
+local talent_check = {
+    SSS={layout=16,Status={Abilities_DMG=0.50,Damage=0.50,Speed=0.50,Critical_Damage=1.25}},
+    ["SS+"]={layout=15,Status={Abilities_DMG=0.35,Damage=0.35,Speed=0.60,Critical_Damage=1.19}},
+    SS={layout=14,Status={Abilities_DMG=0.30,Damage=0.30,Speed=0.72,Critical_Damage=1.16}},
+    ["SS-"]={layout=13,Status={Abilities_DMG=0.26,Damage=0.26,Speed=0.78,Critical_Damage=1.13}},
+    ["S+"]={layout=12,Status={Abilities_DMG=0.24,Damage=0.24,Speed=0.84,Critical_Damage=1.12}},
+    S={layout=11,Status={Abilities_DMG=0.22,Damage=0.22,Speed=0.88,Critical_Damage=1.11}},
+    ["S-"]={layout=10,Status={Abilities_DMG=0.20,Damage=0.20,Speed=0.90,Critical_Damage=1.10}},
+    ["A+"]={layout=9,Status={Abilities_DMG=0.18,Damage=0.18,Speed=0.92,Critical_Damage=1.09}},
+    A={layout=8,Status={Abilities_DMG=0.16,Damage=0.16,Speed=0.94,Critical_Damage=1.08}},
+    ["A-"]={layout=7,Status={Abilities_DMG=0.14,Damage=0.14,Speed=0.96,Critical_Damage=1.07}},
+    ["B+"]={layout=6,Status={Abilities_DMG=0.12,Damage=0.12,Speed=0.98,Critical_Damage=1.06}},
+    B={layout=5,Status={Abilities_DMG=0.10,Damage=0.10,Speed=1.00,Critical_Damage=1.05}},
+    ["B-"]={layout=4,Status={Abilities_DMG=0.08,Damage=0.08,Speed=1.02,Critical_Damage=1.04}},
+    ["C+"]={layout=3,Status={Abilities_DMG=0.06,Damage=0.06,Speed=1.04,Critical_Damage=1.03}},
+    C={layout=2,Status={Abilities_DMG=0.04,Damage=0.04,Speed=1.02,Critical_Damage=1.02}},
+    ["C-"]={layout=1,Status={Abilities_DMG=0.02,Damage=0.02,Speed=1.08,Critical_Damage=1.01}}
+}
+
+local talentTiersList = {}
+for tier in pairs(talent_check) do table.insert(talentTiersList, tier) end
+table.sort(talentTiersList, function(a,b) return (talent_check[a].layout or 0) > (talent_check[b].layout or 0) end)
+
+local talentUIToRemote = { ["Damage"]="Damage",["Ability Damage"]="Abilities_DMG", ["Critical"]="Critical_Damage",["Speed"]="Speed" }
+
+-- ==========================================
+-- [ HELPER FUNCTIONS ]
+-- ==========================================
+local function smartWait(seconds, conditionFunc)
+    local elapsed = 0
+    while elapsed < seconds do
+        if conditionFunc and not conditionFunc() then return false end
+        task.wait(0.1)
+        elapsed = elapsed + 0.1
+    end
+    return true
+end
+
+local function FireOrInvokeRemote(parentFolder, remoteName, ...)
+    if not parentFolder then return end
+    local remote = parentFolder:FindFirstChild(remoteName)
+    if not remote then return end
+    
+    local args = {...}
+    if remote:IsA("RemoteEvent") then pcall(function() remote:FireServer(unpack(args)) end)
+    elseif remote:IsA("RemoteFunction") then task.spawn(function() pcall(function() remote:InvokeServer(unpack(args)) end) end) end
+end
+
+local function SafeFirePrompt(prompt)
+    if not prompt or not prompt.Parent or not prompt.Enabled then return end
+    task.spawn(function()
+        for i = 1, 3 do
+            if prompt and prompt.Parent and prompt.Enabled then
+                pcall(function() fireproximityprompt(prompt, 1, true) end)
+                task.wait(0.15)
+            else break end
+        end
+    end)
+end
+
+local function applySpoofName(char)
+    if not char then return end
+    task.spawn(function()
+        local head = char:WaitForChild("Head", 10)
+        local overheads = head and head:WaitForChild("Overheads", 10)
+        if not overheads then return end
+
+        local seq = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromHex("#d8b4fe")),
+            ColorSequenceKeypoint.new(0.5, Color3.fromHex("#a855f7")),
+            ColorSequenceKeypoint.new(1, Color3.fromHex("#4c1d95"))
+        })
+
+        local disp = overheads:FindFirstChild("DisplayNames")
+        if disp and disp:IsA("TextLabel") then 
+            disp.Text = "Enchant Hub" 
+            disp.TextColor3 = Color3.new(1, 1, 1)
+            local grad = disp:FindFirstChildOfClass("UIGradient") or Instance.new("UIGradient", disp)
+            grad.Color = seq
+        end
+
+        local names = overheads:FindFirstChild("Names")
+        if names and names:IsA("TextLabel") then 
+            names.Text = "discord.gg/jUeYgfrrPC" 
+            names.TextColor3 = Color3.new(1, 1, 1)
+            local grad = names:FindFirstChildOfClass("UIGradient") or Instance.new("UIGradient", names)
+            grad.Color = seq
+        end
+
+        local title = overheads:FindFirstChild("Title")
+        if title and title:IsA("TextLabel") then title.Visible = false end
+    end)
+end
+
+task.spawn(function()
+    if LP.Character then applySpoofName(LP.Character) end
+    LP.CharacterAdded:Connect(applySpoofName)
+end)
+
+local function GetCleanArray(val)
+    local res = {}
+    if type(val) == "table" then
+        for k,v in pairs(val) do
+            if type(k)=="number" and type(v)=="string" then table.insert(res,v)
+            elseif type(k)=="string" and v==true then table.insert(res,k)
+            elseif type(k)=="string" and type(v)=="string" then table.insert(res,v) end
+        end
+    elseif type(val)=="string" and val~="" then table.insert(res,val) end
+    return res
+end
+
+local function parseSuffixNumber(str)
+    if type(str)~="string" then return 0 end
+    str=string.lower(string.gsub(str,",",""))
+    local num = tonumber(string.match(str,"[%d%.]+" )) or 0
+    if string.find(str,"k") then num = num*1e3
+    elseif string.find(str,"m") then num = num*1e6
+    elseif string.find(str,"b") then num = num*1e9
+    elseif string.find(str,"t") then num = num*1e12
+    elseif string.find(str,"qa") then num = num*1e15 end
+    return num
+end
+
+local function teleportToPosition(targetPos, killVel)
+    local char = LP.Character
+    local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+    if not pHRP then return false end
+    if killVel then
+        pHRP.AssemblyLinearVelocity = Vector3.zero
+        pHRP.AssemblyAngularVelocity = Vector3.zero
+    end
+    pHRP.CFrame = CFrame.new(targetPos)
+    return true
+end
+
+local function tweenToPosition(targetPos)
+    local char = LP.Character
+    local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+    if not pHRP then return nil end
+    local dist = (pHRP.Position-targetPos).Magnitude
+    local speed = 50+(math.clamp(tweenSpeed,0,1)*4950)
+    local t = dist/speed
+    local tween = TS:Create(pHRP,TweenInfo.new(t,Enum.EasingStyle.Linear),{CFrame=CFrame.new(targetPos)})
+    tween:Play()
+    return tween
+end
+
+print("✅ Enchant Hub Loaded!")
+
+if Workspace:FindFirstChild("Block_Maps") then
+    for _,map in ipairs(Workspace.Block_Maps:GetChildren()) do
+        if string.find(map.Name,"%(Raid%)") then
+            local cleanName = string.gsub(map.Name,"%s*%(Raid%)","")
+            if not table.find(raidMapsList,cleanName) then
+                table.insert(raidMapsList,cleanName)
+            end
+        end
+    end
+end
+if not table.find(raidMapsList,"Double Dungeons") then table.insert(raidMapsList,"Double Dungeons") end
+if not table.find(raidMapsList,"Jujutsu Highschool") then table.insert(raidMapsList,"Jujutsu Highschool") end
+
+if #raidMapsList > 0 then selectedRaidMap = raidMapsList[1] end
+
+local eggList = {}
+pcall(function()
+    local cardsFolder = RS:FindFirstChild("Assets") and RS.Assets:FindFirstChild("Cards")
+    if cardsFolder then
+        for _,card in ipairs(cardsFolder:GetChildren()) do
+            if card.Name ~= "Exclusive" and card.Name ~= "Holders" then
+                table.insert(eggList,card.Name)
+            end
+        end
+    end
+end)
+table.sort(eggList)
+
+local function getMapFromEgg(eName)
+    eName = string.lower(eName)
+    if string.find(eName,"namex") then return "Namex Planet" end
+    if string.find(eName,"colosseum") then return "Colosseum Kingdom" end
+    if string.find(eName,"demon") then return "Demon Forest" end
+    if string.find(eName,"dungeon") then return "Dungeons Town" end
+    if string.find(eName,"reaper") then return "Reaper Society" end
+    if string.find(eName,"jujutsu") then return "Jujutsu Highschool" end
+    return "Lobby"
+end
+
+local function RefreshMonsters()
+    table.clear(monsterList)
+    table.clear(modelNameToDisplay)
+    for _,mon in ipairs(Server:GetChildren()) do
+        if string.find(mon.Name,"_") and Clients:FindFirstChild(mon.Name) then
+            pcall(function()
+                local mName = mon.Units_Displays.Names.Text
+                if mName and mName ~= "" then
+                    if not table.find(monsterList,mName) then
+                        table.insert(monsterList,mName)
+                    end
+                    modelNameToDisplay[mon.Name] = mName
+                end
+            end)
+        end
+    end
+end
+RefreshMonsters()
+
+local function RefreshInventoryUnits()
+    table.clear(inventoryUnitsList)
+    table.clear(inventoryUnitsMap)
+    local nameOccurrences, tempUnits = {}, {}
+    local myUnitsFolder = RS:FindFirstChild("Players_Data")
+        and RS.Players_Data:FindFirstChild(LP.Name)
+        and RS.Players_Data[LP.Name]:FindFirstChild("Inventory")
+        and RS.Players_Data[LP.Name].Inventory:FindFirstChild("Units")
+    
+    if myUnitsFolder then
+        for _,unitFolder in ipairs(myUnitsFolder:GetChildren()) do
+            local nicknameVal = unitFolder:FindFirstChild("Nickname")
+            local baseName = (nicknameVal and nicknameVal:IsA("StringValue") and nicknameVal.Value ~= "")
+                and nicknameVal.Value or unitFolder.Name
+            nameOccurrences[baseName] = (nameOccurrences[baseName] or 0)+1
+            table.insert(tempUnits,{folder=unitFolder,bName=baseName})
+        end
+        local currentCounts = {}
+        for _,uData in ipairs(tempUnits) do
+            local bn = uData.bName
+            currentCounts[bn] = (currentCounts[bn] or 0)+1
+            local finalName = (nameOccurrences[bn] > 1)
+                and (bn.." "..currentCounts[bn])
+                or (bn.." 1")
+            table.insert(inventoryUnitsList,finalName)
+            inventoryUnitsMap[finalName] = uData.folder
+        end
+    end
+    table.sort(inventoryUnitsList)
+end
+RefreshInventoryUnits()
+
+local function safeGetVal(parent,name)
+    if not parent then return "N/A" end
+    local obj = parent:FindFirstChild(name)
+    if obj then
+        local success, val = pcall(function() return obj.Value end)
+        if success and val ~= nil then return tostring(val) end
+    end
+    return "N/A"
+end
+
+local function safeGetNestedVal(parent,folderName,name)
+    if not parent then return "N/A" end
+    local folder = parent:FindFirstChild(folderName)
+    if folder then
+        local obj = folder:FindFirstChild(name)
+        if obj then
+            local success, val = pcall(function() return obj.Value end)
+            if success and val ~= nil then return tostring(val) end
+        end
+    end
+    return "N/A"
+end
+
+local function getStatLayoutAndTier(statName,valNumStr)
+    local valNum = tonumber(valNumStr)
+    if not valNum then return 0,"N/A" end
+    local bestLayout, bestTier, minDiff = 0, "N/A", math.huge
+    for tier,data in pairs(talent_check) do
+        if data and data.Status then
+            local targetVal = data.Status[statName]
+            if targetVal then
+                local diff = math.abs(valNum-targetVal)
+                if diff < 0.015 and diff < minDiff then
+                    minDiff = diff; bestLayout = data.layout; bestTier = tier
+                end
+            end
+        end
+    end
+    return bestLayout,bestTier
+end
+
+local function getUnitInfoText(unitDispName)
+    local unitFolder = inventoryUnitsMap[unitDispName]
+    if not unitFolder or not unitFolder.Parent then
+        RefreshInventoryUnits(); unitFolder = inventoryUnitsMap[unitDispName]
+        if not unitFolder then return "Loading or Unit Not Found..." end
+    end
+    local nickName = safeGetVal(unitFolder,"Nickname")
+    if nickName == "N/A" then nickName = unitFolder.Name end
+    local level = safeGetVal(unitFolder,"Level")
+    local traitPrimary = safeGetNestedVal(unitFolder,"Traits","Primary")
+    if traitPrimary == "N/A" then traitPrimary = safeGetVal(unitFolder,"Primary_Trait") end
+    local traitSub = safeGetNestedVal(unitFolder,"Traits","Sub")
+    if traitSub == "N/A" then traitSub = safeGetVal(unitFolder,"Sub_Trait") end
+    
+    local _,talDmg = getStatLayoutAndTier("Damage",
+        safeGetNestedVal(unitFolder,"Potentials_Adjustment","Damage")=="N/A"
+        and safeGetVal(unitFolder,"Damage_Talent")
+        or safeGetNestedVal(unitFolder,"Potentials_Adjustment","Damage"))
+    local _,talAbil = getStatLayoutAndTier("Abilities_DMG",
+        safeGetNestedVal(unitFolder,"Potentials_Adjustment","Abilities_DMG")=="N/A"
+        and safeGetVal(unitFolder,"Ability_Talent")
+        or safeGetNestedVal(unitFolder,"Potentials_Adjustment","Abilities_DMG"))
+    local _,talCrit = getStatLayoutAndTier("Critical_Damage",
+        safeGetNestedVal(unitFolder,"Potentials_Adjustment","Critical_Damage")=="N/A"
+        and safeGetVal(unitFolder,"Critical_Talent")
+        or safeGetNestedVal(unitFolder,"Potentials_Adjustment","Critical_Damage"))
+    local _,talSpd = getStatLayoutAndTier("Speed",
+        safeGetNestedVal(unitFolder,"Potentials_Adjustment","Speed")=="N/A"
+        and safeGetVal(unitFolder,"Speed_Talent")
+        or safeGetNestedVal(unitFolder,"Potentials_Adjustment","Speed"))
+        
+    local info = string.format(
+        "Name units : %s\nLevel Units : %s\n--- Traits ---\nPrimary > %s\nSub > %s\n--- Talents ---\nDamage > %s\nAbility Damage > %s\nCritical > %s\nSpeed > %s",
+        nickName,level,traitPrimary,traitSub,talDmg,talAbil,talCrit,talSpd)
+        
+    info = info.."\n\n--- Queue Status ---"
+    if #selectedInventoryUnits > 0 then
+        for i,uName in ipairs(selectedInventoryUnits) do
+            local state = unitStates[uName] or "waiting"
+            local emoji = (state=="done") and "✅" or (state=="rolling" and "🔄" or "⏸️")
+            info = info..string.format("\n%d. %s [%s]",i,uName,emoji)
+        end
+    else 
+        info = info.."\nNone" 
+    end
+    return info
+end
+
+-- ==========================================
+-- [ UI INITIALIZATION ]
+-- ==========================================
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+local Window = WindUI:CreateWindow({
+    Title="Enchant Hub",Author="by xchant",Folder="Enchant_Hub",
+    Size=UDim2.fromOffset(600,440),Theme="Dark",Resizable=false,
+    SideBarWidth=160,Transparent=true,
+})
+
+WindUI:Notify({Title="Enchant Loading",Content="Thanks for using my script",Duration=10})
+Window:CreateTopbarButton("DiscordButton","message-circle-more",function() end,990)
+Window:EditOpenButton({Title="Open Enchant Hub",Icon="monitor",CornerRadius=UDim.new(0,4),OnlyMobile=false,Enabled=true,Draggable=true})
+
+local userStatus = isPremium and "Premium (VIP)" or "Free User"
+local tagColor = isPremium and Color3.fromHex("#ffd700") or Color3.fromHex("#30ff6a")
+Window:Tag({Title=userStatus,Color=tagColor,Radius=3})
+Window:Tag({Title="version 0.0.9",Color=Color3.fromHex("#30ff6a"),Radius=3})
+
+local SecTab = {
+    PremiumTabSection = Window:Section({Title="Premium",Icon="banknote-arrow-up",Opened=false}),
+    MainTabSection = Window:Section({Title="General",Icon="house",Opened=false}),
+    ConfigTabSection = Window:Section({Title="Config", Icon="folders",Opened=false}),
+}
+local Tabs = {
+    Info = Window:Tab({Title="Info", Icon="info"}),
+    Premium = SecTab.PremiumTabSection:Tab({Title="Premium", Icon="chevron-right"}),
+    Risk = SecTab.PremiumTabSection:Tab({Title="Risk", Icon="triangle-alert"}),
+    General = SecTab.MainTabSection:Tab({Title="General", Icon="chevron-right"}),
+    Teleport = SecTab.MainTabSection:Tab({Title="Teleport", Icon="chevron-right"}),
+    Summon = SecTab.MainTabSection:Tab({Title="Summon", Icon="chevron-right"}),
+    Unit = SecTab.MainTabSection:Tab({Title="Unit", Icon="chevron-right"}),
+    Misc = SecTab.MainTabSection:Tab({Title="Misc", Icon="chevron-right"}),
+    Webhook = Window:Tab({Title="Webhook", Icon="link"}),
+    Setting = SecTab.MainTabSection:Tab({Title="Setting", Icon="chevron-right"}),
+    Config = SecTab.ConfigTabSection:Tab({Title="Configs", Icon="chevron-right"}),
+}
+
+-- ==========================================
+-- [ INFO TAB SYSTEM ]
+-- ==========================================
+local infoStatus = Tabs.Info:Paragraph({Title="Live Status", Desc="Loading..."})
+
+Tabs.Info:Button({
+    Title = "Join Discord",
+    Callback = function()
+        setclipboard("https://discord.gg/jUeYgfrrPC")
+        WindUI:Notify({Title="Discord", Content="Copied to clipboard!", Duration=3})
+    end
+})
+
+task.spawn(function()
+    while task.wait(1) do
+        local elapsed = os.clock() - scriptStartTime
+        local mins = math.floor(elapsed / 60)
+        local secs = math.floor(elapsed % 60)
+        local hrs = math.floor(mins / 60)
+        mins = mins % 60
+        local timeStr = string.format("%02d:%02d:%02d", hrs, mins, secs)
+        
+        infoStatus:SetDesc(string.format(
+            "Player: %s\nUptime: %s\nAccess: %s\nActivity: %s",
+            LP.Name, timeStr, userStatus, currentActivity
+        ))
+    end
+end)
+
+-- ==========================================
+-- [ PREMIUM LOCK ]
+-- ==========================================
+if not isPremium then
+    Tabs.Premium:Paragraph({
+        Title = "Premium Locked",
+        Desc = "You do not have Premium access.\nPlease upgrade to unlock these features.\ndiscord.gg/jUeYgfrrPC"
+    })
+    Tabs.Risk:Paragraph({
+        Title = "Premium Locked",
+        Desc = "You do not have Premium access.\nPlease upgrade to unlock these features.\ndiscord.gg/jUeYgfrrPC"
+    })
+end
+
+local SecGeneral = {
+    Section_DmgBoost = Tabs.Premium:Section({Title="Damage Boost"}),
+    SecPremiumMisc = Tabs.Premium:Section({Title="Premium Misc"}),
+    AutoFarm = Tabs.General:Section({Title="Auto Farm"}),
+    AbandonVillage = Tabs.General:Section({Title="Abandon Village"}),
+    AutoRift = Tabs.General:Section({Title="Auto Rift"}),
+    Sukuna = Tabs.General:Section({Title="Sukuna"}), 
+    DragonBall = Tabs.General:Section({Title="Dragon Ball"}),
+    AutoRaid = Tabs.General:Section({Title="Auto Raid"}),
+    SecModeFarm = Tabs.Misc:Section({Title="Farm Setting"}),
+    MiscFeatures = Tabs.Misc:Section({Title="Features"}),
+}
+
+local function TriggerSave()
+    if autoSaveConfig then
+        local data = {
+            fastReroll=fastRerollEnabled,hideReroll=hideRerollEnabled,hideReward=hideRewardEnabled,fpsBoost=fpsBoostEnabled,
+            antiAfk=antiAfkEnabled,
+            webhookUrl=webhookUrl, webhookEnabled=webhookEnabled,
+            dmgCooldown=tostring(dmgBoostCooldown),dmgLimit=tostring(safeDpsLimit),
+            dmgBoost=dmgBoostEnabled,safeBoost=safeDmgBoostEnabled,
+            autoFarm=autoFarmEnabled,autoClick=autoClickEnabled,farmMode=farmMode,tweenSpeed=tostring(tweenSpeed),
+            autoRift=autoRiftEnabled,autoAbandon=autoAbandonVillageEnabled,autoRaid=autoRaidEnabled,
+            autoReplay=autoReplayEnabled,autoLeave=autoLeaveEnabled,
+            autoCursedFinger=autoCursedFingerEnabled,autoSukuna=autoSukunaEnabled,autoDragonBall=autoDragonBallEnabled,
+            raidMap=selectedRaidMap,raidDiff=selectedRaidDifficulty,collectChest=collectPurpleChest,
+            autoTraits=autoTraitsEnabled,autoTalents=autoTalentsEnabled,
+            targetTraits=targetTraits,targetTalents=targetTalents,targetTalentTier=targetTalentTier,
+            autoSummon=autoSummonEnabled,selectedEgg=selectedEgg,
+            autoFeedSelected=autoFeedSelectedEnabled,autoFeedAll=autoFeedAllEnabled,selectedFeedUnits=selectedFeedUnits,
+            autoSave=autoSaveConfig,autoLoad=autoLoadConfig
+        }
+        pcall(function() writefile(ConfigName,HttpService:JSONEncode(data)) end)
+    end
+end
+
+local function LoadConfig()
+    local success, err = pcall(function()
+        if isfile(ConfigName) then
+            local data = HttpService:JSONDecode(readfile(ConfigName))
+            if not data then return end
+            if data.fastReroll ~= nil then fastRerollEnabled=data.fastReroll;UI_Elements.FastReroll:SetValue(data.fastReroll) end
+            if data.hideReroll ~= nil then hideRerollEnabled=data.hideReroll;UI_Elements.HideReroll:SetValue(data.hideReroll) end
+            if data.hideReward ~= nil then hideRewardEnabled=data.hideReward;UI_Elements.HideReward:SetValue(data.hideReward) end
+            if data.fpsBoost ~= nil then fpsBoostEnabled=data.fpsBoost;UI_Elements.FpsBoost:SetValue(data.fpsBoost) end
+            if data.antiAfk ~= nil then antiAfkEnabled=data.antiAfk;if UI_Elements.AntiAFK then UI_Elements.AntiAFK:SetValue(data.antiAfk) end end
+            
+            if data.webhookUrl ~= nil then webhookUrl=data.webhookUrl;if UI_Elements.WebhookUrl then UI_Elements.WebhookUrl:SetValue(data.webhookUrl) end end
+            if data.webhookEnabled ~= nil then webhookEnabled=data.webhookEnabled;if UI_Elements.WebhookToggle then UI_Elements.WebhookToggle:SetValue(data.webhookEnabled) end end
+
+            if data.dmgCooldown ~= nil then 
+                local cd = tonumber(data.dmgCooldown) or 0.08
+                if cd < 0.05 then cd = 0.05 end
+                dmgBoostCooldown=cd;UI_Elements.DmgCooldown:SetValue(tostring(cd)) 
+            end
+            if data.dmgLimit ~= nil then safeDpsLimit=parseSuffixNumber(data.dmgLimit);UI_Elements.DmgLimit:SetValue(data.dmgLimit) end
+            if data.dmgBoost ~= nil then dmgBoostEnabled=data.dmgBoost;UI_Elements.DmgBoost:SetValue(data.dmgBoost) end
+            if data.safeBoost ~= nil then safeDmgBoostEnabled=data.safeBoost;UI_Elements.SafeBoost:SetValue(data.safeBoost) end
+            
+            if data.autoFarm ~= nil then autoFarmEnabled=data.autoFarm;UI_Elements.AutoFarm:SetValue(data.autoFarm) end
+            if data.autoClick ~= nil then autoClickEnabled=data.autoClick;UI_Elements.AutoClick:SetValue(data.autoClick) end
+            if data.farmMode ~= nil then farmMode=data.farmMode;dropdowns.FarmMode:SetValue(data.farmMode) end
+            if data.tweenSpeed ~= nil then tweenSpeed=tonumber(data.tweenSpeed) or 0.5;UI_Elements.TweenSpeed:SetValue(data.tweenSpeed) end
+            if data.autoRift ~= nil then autoRiftEnabled=data.autoRift;UI_Elements.AutoRift:SetValue(data.autoRift) end
+            if data.autoAbandon ~= nil then autoAbandonVillageEnabled=data.autoAbandon;UI_Elements.AutoAbandon:SetValue(data.autoAbandon) end
+            if data.autoRaid ~= nil then autoRaidEnabled=data.autoRaid;UI_Elements.AutoRaid:SetValue(data.autoRaid) end
+            if data.autoReplay ~= nil then autoReplayEnabled=data.autoReplay;UI_Elements.AutoReplay:SetValue(data.autoReplay) end
+            if data.autoLeave ~= nil then autoLeaveEnabled=data.autoLeave;UI_Elements.AutoLeave:SetValue(data.autoLeave) end
+            if data.autoCursedFinger ~= nil then autoCursedFingerEnabled=data.autoCursedFinger;UI_Elements.AutoCursedFinger:SetValue(data.autoCursedFinger) end
+            if data.autoSukuna ~= nil then autoSukunaEnabled=data.autoSukuna;UI_Elements.AutoSukuna:SetValue(data.autoSukuna) end
+            if data.autoDragonBall ~= nil then autoDragonBallEnabled=data.autoDragonBall;UI_Elements.AutoDragonBall:SetValue(data.autoDragonBall) end
+            if data.raidMap ~= nil then selectedRaidMap=data.raidMap;dropdowns.SelectRaid:SetValue(data.raidMap) end
+            if data.raidDiff ~= nil then selectedRaidDifficulty=data.raidDiff;dropdowns.SelectDifficulty:SetValue(data.raidDiff) end
+            if data.collectChest ~= nil then collectPurpleChest=data.collectChest;dropdowns.CollectChest:SetValue(data.collectChest) end
+            if data.autoTraits ~= nil then autoTraitsEnabled=data.autoTraits;UI_Elements.AutoTraits:SetValue(data.autoTraits) end
+            if data.autoTalents ~= nil then autoTalentsEnabled=data.autoTalents;UI_Elements.AutoTalents:SetValue(data.autoTalents) end
+            if data.targetTraits ~= nil then targetTraits=data.targetTraits;dropdowns.SelectTraits:SetValue(data.targetTraits) end
+            if data.targetTalents ~= nil then targetTalents=data.targetTalents;dropdowns.SelectTalents:SetValue(data.targetTalents) end
+            if data.targetTalentTier ~= nil then targetTalentTier=data.targetTalentTier;dropdowns.SelectStats:SetValue(data.targetTalentTier) end
+            if data.autoSummon ~= nil then autoSummonEnabled=data.autoSummon;UI_Elements.AutoSummon:SetValue(data.autoSummon) end
+            if data.selectedEgg ~= nil then selectedEgg=data.selectedEgg;dropdowns.SelectEgg:SetValue(data.selectedEgg) end
+            
+            if data.autoFeedSelected ~= nil then autoFeedSelectedEnabled=data.autoFeedSelected;if UI_Elements.AutoFeedSelected then UI_Elements.AutoFeedSelected:SetValue(data.autoFeedSelected) end end
+            if data.autoFeedAll ~= nil then autoFeedAllEnabled=data.autoFeedAll;if UI_Elements.AutoFeedAll then UI_Elements.AutoFeedAll:SetValue(data.autoFeedAll) end end
+            if data.selectedFeedUnits ~= nil then selectedFeedUnits=data.selectedFeedUnits;if dropdowns.SelectFeedUnits then dropdowns.SelectFeedUnits:SetValue(data.selectedFeedUnits) end end
+
+            if data.autoSave ~= nil then autoSaveConfig=data.autoSave;UI_Elements.AutoSave:SetValue(data.autoSave) end
+            if data.autoLoad ~= nil then autoLoadConfig=data.autoLoad;UI_Elements.AutoLoad:SetValue(data.autoLoad) end
+            WindUI:Notify({Title="Config",Content="Config Loaded Successfully!",Duration=3})
+        else
+            WindUI:Notify({Title="Config",Content="No Config file found!",Duration=3})
+        end
+    end)
+    if not success then warn("Enchant Hub Load Error: ",err) end
+end
+
+Tabs.Config:Section({Title="Config Management"})
+Tabs.Config:Button({Title="Save Config",Callback=function() TriggerSave();WindUI:Notify({Title="Config",Content="Config Saved!",Duration=3}) end})
+Tabs.Config:Button({Title="Load Config",Callback=function() LoadConfig() end})
+Tabs.Config:Button({Title="Delete Config",Callback=function()
+    pcall(function() if isfile(ConfigName) then delfile(ConfigName);WindUI:Notify({Title="Config",Content="Config Deleted!",Duration=3}) end end)
+end})
+UI_Elements.AutoSave = Tabs.Config:Toggle({Title="Auto Save",Value=false,Callback=function(s) autoSaveConfig=s;TriggerSave() end})
+UI_Elements.AutoLoad = Tabs.Config:Toggle({Title="Auto Load",Value=false,Callback=function(s) autoLoadConfig=s;TriggerSave() end})
+
+task.spawn(function()
+    pcall(function()
+        if isfile(ConfigName) then
+            local data = HttpService:JSONDecode(readfile(ConfigName))
+            if data and data.autoLoad then LoadConfig() end
+        end
+    end)
+end)
+
+-- ==========================================
+-- [ RISK TAB SYSTEM ]
+-- ==========================================
+Tabs.Risk:Paragraph({Title="Warning", Desc="Features in this tab are highly risky.\nUse them at your own discretion."})
+
+Tabs.Risk:Toggle({
+    Title = "Rollback (Spam Remote)",
+    Value = false,
+    Callback = function(state)
+        if state and not isPremium then
+            WindUI:Notify({Title="Locked", Content="Premium Feature Only!", Duration=3})
+            return
+        end
+        rollbackEnabled = state
+        if state then
+            task.spawn(function()
+                local eventPath = RS:WaitForChild("Remotes"):WaitForChild("Systems"):WaitForChild("Setting_Event")
+                while rollbackEnabled do
+                    pcall(function()
+                        eventPath:FireServer("Low Graphics\x7F\xFF", false)
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+Tabs.Risk:Button({
+    Title = "Rejoin Server",
+    Callback = function()
+        if not isPremium then
+            WindUI:Notify({Title="Locked", Content="Premium Feature Only!", Duration=3})
+            return
+        end
+        pcall(function()
+            if #Players:GetPlayers() <= 1 then
+                LP:Kick("\nRejoining Server...")
+                task.wait()
+                TeleportService:Teleport(game.PlaceId, LP)
+            else
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
+            end
+        end)
+    end
+})
+
+-- ==========================================
+-- [ WEBHOOK SYSTEM ]
+-- ==========================================
+UI_Elements.WebhookUrl = Tabs.Webhook:Input({
+    Title = "Webhook URL",
+    Value = webhookUrl,
+    Placeholder = "Enter Webhook URL here...",
+    Callback = function(v) 
+        webhookUrl = v
+        TriggerSave() 
+    end
+})
+
+UI_Elements.WebhookToggle = Tabs.Webhook:Toggle({
+    Title = "Enable Webhook",
+    Value = webhookEnabled,
+    Callback = function(s) 
+        webhookEnabled = s
+        TriggerSave() 
+    end
+})
+
+Tabs.Webhook:Button({
+    Title = "Test Webhook",
+    Callback = function()
+        if webhookEnabled and webhookUrl ~= "" then
+            SendWebhook()
+            WindUI:Notify({Title="Webhook",Content="Test message sent!",Duration=3})
+        else
+            WindUI:Notify({Title="Webhook",Content="Please enable Webhook and enter a valid URL.",Duration=3})
+        end
+    end
+})
+
+-- ==========================================
+-- [ PREMIUM / GENERAL UI ]
+-- ==========================================
+UI_Elements.FastReroll = SecGeneral.SecPremiumMisc:Toggle({Title="Fast Reroll",Value=false,Callback=function(s) 
+    if s and not isPremium then 
+        WindUI:Notify({Title="Locked", Content="Premium Feature Only!", Duration=3})
+        UI_Elements.FastReroll:SetValue(false)
+        fastRerollEnabled = false
+        return 
+    end
+    fastRerollEnabled = s
+    TriggerSave() 
+end})
+
+UI_Elements.HideReroll = SecGeneral.MiscFeatures:Toggle({Title="Hide Reroll",Value=false,Callback=function(s) hideRerollEnabled=s; TriggerSave() end})
+UI_Elements.HideReward = SecGeneral.MiscFeatures:Toggle({Title="Hide Reward",Value=false,Callback=function(s) hideRewardEnabled=s; TriggerSave() end})
+
+UI_Elements.FpsBoost = SecGeneral.MiscFeatures:Toggle({Title="FPS Boost (Max Performance)",Value=false,Callback=function(s) 
+    fpsBoostEnabled = s
+    TriggerSave() 
+    if s then
+        task.spawn(function()
+            pcall(function()
+                for _, v in ipairs(Workspace:GetDescendants()) do
+                    if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") or v:IsA("Explosion") then
+                        v.Enabled = false
+                        v:Destroy()
+                    end
+                end
+            end)
+        end)
+        if not fpsBoostConnection then
+            fpsBoostConnection = Workspace.DescendantAdded:Connect(function(v)
+                if fpsBoostEnabled then
+                    if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") or v:IsA("Explosion") then
+                        pcall(function() v.Enabled = false; v:Destroy() end)
+                    end
+                end
+            end)
+        end
+    else
+        if fpsBoostConnection then
+            fpsBoostConnection:Disconnect()
+            fpsBoostConnection = nil
+        end
+    end
+end})
+
+UI_Elements.AntiAFK = SecGeneral.MiscFeatures:Toggle({Title="Anti-AFK",Value=true,Callback=function(s) 
+    antiAfkEnabled = s
+    TriggerSave()
+end})
+
+UI_Elements.DmgCooldown = SecGeneral.Section_DmgBoost:Input({
+    Title="Damage Boost Cooldown",
+    Value="0.08",
+    Placeholder="Min = 0.05",
+    Callback=function(v) 
+        local n = tonumber(v)
+        if n then 
+            if n < 0.05 then n = 0.05 end
+            dmgBoostCooldown = n
+            UI_Elements.DmgCooldown:SetValue(tostring(n))
+            TriggerSave() 
+        end 
+    end
+})
+UI_Elements.DmgLimit = SecGeneral.Section_DmgBoost:Input({Title="Damage Boost Limit",Value="3500000",Placeholder="0 = Infinite",Callback=function(v) local n=parseSuffixNumber(v);safeDpsLimit=(n and n>0) and n or math.huge;TriggerSave() end})
+
+-- ==========================================
+-- [ DAMAGE BOOST - Anti-Rate Limit Edition ]
+-- ==========================================
+
+local lastDmgBoostState = nil
+local firedUnits = setmetatable({}, {__mode = "k"})
+
+local function setAutoAttackState(state)
+    pcall(function()
+        local pData = RS:FindFirstChild("Players_Data")
+        if pData then
+            local myDataNode = pData:FindFirstChild(LP.Name)
+            if myDataNode and myDataNode:FindFirstChild("Data") then
+                local autoAtk = myDataNode.Data:FindFirstChild("Auto_Attacks")
+                if autoAtk and autoAtk:IsA("BoolValue") then 
+                    autoAtk.Value = state 
+                end
+            end
+        end
+    end)
+end
+
+UI_Elements.DmgBoost = SecGeneral.Section_DmgBoost:Toggle({
+    Title="Damage Boost",
+    Value=false,
+    Callback=function(state)
+        if state and not isPremium then
+            WindUI:Notify({Title="Locked", Content="Premium Feature Only!", Duration=3})
+            UI_Elements.DmgBoost:SetValue(false)
+            dmgBoostEnabled = false
+            return
+        end
+        dmgBoostEnabled = state
+        TriggerSave()
+    end
+})
+
+local myCachedUnitsFolder = nil
+
+RunService.Heartbeat:Connect(function()
+    local enabled = dmgBoostEnabled and not pauseDmgBoost and isPremium
+
+    if enabled ~= lastDmgBoostState then
+        lastDmgBoostState = enabled
+        setAutoAttackState(enabled)
+        if not enabled then
+            table.clear(firedUnits)
+        end
+    end
+
+    if not enabled then return end
+    if not (ByteNetReq and ByteNetReq.Parent) then return end
+
+    local now = os_clock()
+    if now - lastAttackTime < dmgBoostCooldown then return end
+
+    if not myCachedUnitsFolder or myCachedUnitsFolder.Parent ~= UnitsServer then
+        myCachedUnitsFolder = UnitsServer:FindFirstChild(LP.Name)
+        if not myCachedUnitsFolder then return end
+    end
+
+    local units = myCachedUnitsFolder:GetChildren()
+    local shouldFire = false
+
+    for i = 1, #units do
+        local unit = units[i]
+        local d = unit:FindFirstChild("Debounce")
+        
+        if d then
+            if d.Value == true then
+                if not firedUnits[unit] then
+                    firedUnits[unit] = true
+                    shouldFire = true
+                end
+            else
+                firedUnits[unit] = nil
+            end
+        end
+    end
+
+    if shouldFire then
+        lastAttackTime = now
+        pcall(function() ByteNetReq:FireServer(attackBuffer) end)
+    end
+end)
+
+UI_Elements.SafeBoost = SecGeneral.Section_DmgBoost:Toggle({Title="Safe Boost",Value=false,Callback=function(state) 
+    if state and not isPremium then
+        WindUI:Notify({Title="Locked", Content="Premium Feature Only!", Duration=3})
+        UI_Elements.SafeBoost:SetValue(false)
+        safeDmgBoostEnabled = false
+        return
+    end
+    safeDmgBoostEnabled = state
+    TriggerSave() 
+end})
+
+Tabs.Unit:Section({Title="Unit Select & Info"})
+local unitInfoParagraph = Tabs.Unit:Paragraph({Title="Units Info",Desc="Please select a unit to display info."})
+Tabs.Unit:Button({Title="Refresh Inventory Units",Callback=function()
+    RefreshInventoryUnits()
+    if dropdowns.SelectInventoryUnits then dropdowns.SelectInventoryUnits:Refresh(inventoryUnitsList) end
+    if dropdowns.SelectFeedUnits then dropdowns.SelectFeedUnits:Refresh(inventoryUnitsList) end
+end})
+
+dropdowns.SelectInventoryUnits = Tabs.Unit:Dropdown({Title="Select Units",Values=inventoryUnitsList,Value={},Multi=true,AllowNone=true,Callback=function(val)
+    local opts = GetCleanArray(val); selectedInventoryUnits = {}
+    for _,o in ipairs(opts) do table.insert(selectedInventoryUnits,o);if not unitStates[o] then unitStates[o]="waiting" end end
+    for k in pairs(unitStates) do if not table.find(opts,k) then unitStates[k]=nil end end;TriggerSave()
+end})
+
+Tabs.Unit:Section({Title="Auto Traits"})
+dropdowns.SelectTraits = Tabs.Unit:Dropdown({Title="Select Traits",Values=traits,Value={},Multi=true,AllowNone=true,Callback=function(val) targetTraits=GetCleanArray(val);TriggerSave() end})
+UI_Elements.AutoTraits = Tabs.Unit:Toggle({Title="Auto Traits",Value=false,Callback=function(s) autoTraitsEnabled=s;if s then for k in pairs(unitStates) do unitStates[k]="waiting" end end;TriggerSave() end})
+
+Tabs.Unit:Section({Title="Auto Talents"})
+dropdowns.SelectTalents = Tabs.Unit:Dropdown({Title="Select Talents",Values={"Damage","Ability Damage","Critical","Speed"},Value={},Multi=true,AllowNone=true,Callback=function(val) targetTalents=GetCleanArray(val);TriggerSave() end})
+dropdowns.SelectStats = Tabs.Unit:Dropdown({Title="Select Target Stats",Values=talentTiersList,Value="A",Callback=function(v) targetTalentTier=v;TriggerSave() end})
+UI_Elements.AutoTalents = Tabs.Unit:Toggle({Title="Auto Talents",Value=false,Callback=function(s) autoTalentsEnabled=s;if s then for k in pairs(unitStates) do unitStates[k]="waiting" end end;TriggerSave() end})
+
+-- ==========================================
+-- [ AUTO FEED SYSTEM ]
+-- ==========================================
+Tabs.Unit:Section({Title="Auto Feed Level"})
+dropdowns.SelectFeedUnits = Tabs.Unit:Dropdown({Title="Select Units For Feed",Values=inventoryUnitsList,Value={},Multi=true,AllowNone=true,Callback=function(val)
+    selectedFeedUnits = GetCleanArray(val)
+    TriggerSave()
+end})
+
+UI_Elements.AutoFeedSelected = Tabs.Unit:Toggle({Title="Auto Feed Selected",Value=false,Callback=function(s) 
+    autoFeedSelectedEnabled = s
+    if s and UI_Elements.AutoFeedAll then UI_Elements.AutoFeedAll:SetValue(false) end
+    TriggerSave() 
+end})
+
+UI_Elements.AutoFeedAll = Tabs.Unit:Toggle({Title="Auto Feed All",Value=false,Callback=function(s) 
+    autoFeedAllEnabled = s
+    if s and UI_Elements.AutoFeedSelected then UI_Elements.AutoFeedSelected:SetValue(false) end
+    TriggerSave() 
+end})
+
+task.spawn(function()
+    while task.wait(1) do
+        if autoFeedAllEnabled or autoFeedSelectedEnabled then
+            local myUnitsFolder = RS:FindFirstChild("Players_Data")
+                and RS.Players_Data:FindFirstChild(LP.Name)
+                and RS.Players_Data[LP.Name]:FindFirstChild("Inventory")
+                and RS.Players_Data[LP.Name].Inventory:FindFirstChild("Units")
+            
+            if not myUnitsFolder then continue end
+            
+            if autoFeedAllEnabled then
+                for _, unit in ipairs(myUnitsFolder:GetChildren()) do
+                    if not autoFeedAllEnabled then break end
+                    local rarity = safeGetVal(unit, "Rarity")
+                    if rarity ~= "Limited" then
+                        local lvl = tonumber(safeGetVal(unit, "Level")) or 0
+                        local maxLvlObj = unit:FindFirstChild("MaxLevel") or unit:FindFirstChild("Max_Level")
+                        local maxLvl = maxLvlObj and tonumber(maxLvlObj.Value) or 999
+                        
+                        if lvl < maxLvl then
+                            pcall(function() Remotes.Misc.FeedsEvent:FireServer(unit.Name) end)
+                            task.wait(0.2) 
+                        end
+                    end
+                end
+            elseif autoFeedSelectedEnabled and #selectedFeedUnits > 0 then
+                for _, uName in ipairs(selectedFeedUnits) do
+                    if not autoFeedSelectedEnabled then break end
+                    local unit = inventoryUnitsMap[uName]
+                    if unit and unit.Parent then
+                        local rarity = safeGetVal(unit, "Rarity")
+                        if rarity ~= "Limited" then
+                            local lvl = tonumber(safeGetVal(unit, "Level")) or 0
+                            local maxLvlObj = unit:FindFirstChild("MaxLevel") or unit:FindFirstChild("Max_Level")
+                            local maxLvl = maxLvlObj and tonumber(maxLvlObj.Value) or 999
+                            
+                            if lvl < maxLvl then
+                                pcall(function() Remotes.Misc.FeedsEvent:FireServer(unit.Name) end)
+                                task.wait(0.2)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+-- ==========================================
+
+local savedSummonWorld, savedSummonPos, selectedEgg = nil, nil, ""
+Tabs.Summon:Section({Title="Summon"})
+local summonInfo = Tabs.Summon:Paragraph({Title="Saved Position Info",Desc="World : None\nPosition : None"})
+dropdowns.SelectEgg = Tabs.Summon:Dropdown({Title="Select Egg",Values=eggList,Value="",Callback=function(v) selectedEgg=v;TriggerSave() end})
+Tabs.Summon:Button({Title="Save Position",Callback=function()
+    local char = LP.Character; local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
+    local currentStage = myData and myData:FindFirstChild("Data") and myData.Data:FindFirstChild("OnStage") and myData.Data.OnStage.Value or "Lobby"
+    if hrp then
+        savedSummonWorld = currentStage; savedSummonPos = hrp.Position
+        summonInfo:SetDesc(string.format("World : %s\nPosition : %d, %d, %d",savedSummonWorld,math.floor(savedSummonPos.X),math.floor(savedSummonPos.Y),math.floor(savedSummonPos.Z)))
+    end
+end})
+Tabs.Summon:Button({Title="Reset Position",Callback=function() savedSummonWorld=nil;savedSummonPos=nil;summonInfo:SetDesc("World : None\nPosition : None") end})
+UI_Elements.AutoSummon = Tabs.Summon:Toggle({Title="Auto Summon",Value=false,Callback=function(s) autoSummonEnabled=s;if not s then pcall(function() RS.Remotes.Summoners.Hatch:FireServer(false) end) end;TriggerSave() end})
+
+UI_Elements.AutoCursedFinger = SecGeneral.Sukuna:Toggle({Title="Auto Cursed Finger",Value=false,Callback=function(s) autoCursedFingerEnabled=s;TriggerSave() end})
+UI_Elements.AutoSukuna = SecGeneral.Sukuna:Toggle({Title="Auto Sukuna Boss",Value=false,Callback=function(s) autoSukunaEnabled=s;TriggerSave() end})
+UI_Elements.AutoDragonBall = SecGeneral.DragonBall:Toggle({Title="Auto Dragon Ball",Value=false,Callback=function(s) autoDragonBallEnabled=s;TriggerSave() end})
+
+dropdowns.CategoryMode = SecGeneral.AutoFarm:Dropdown({Title="Mon",Values=monsterList,Value={},Multi=true,AllowNone=true,Callback=function(val) selectedMonsters=GetCleanArray(val) end})
+SecGeneral.AutoFarm:Button({Title="Refresh Monster List",Callback=function()
+    selectedMonsters = {}; RefreshMonsters()
+    dropdowns.CategoryMode:Refresh(monsterList); dropdowns.CategoryMode:SetValue({})
+end})
+UI_Elements.AutoFarm = SecGeneral.AutoFarm:Toggle({Title="Auto Farm Selected",Value=false,Callback=function(s) autoFarmEnabled=s;TriggerSave() end})
+
+UI_Elements.AutoClick = SecGeneral.AutoFarm:Toggle({Title="Auto Click",Value=false,Callback=function(state) 
+    autoClickEnabled = state
+    TriggerSave()
+end})
+
+RunService.Heartbeat:Connect(function()
+    if autoClickEnabled then
+        local now = os_clock()
+        if now - lastClickTime >= 0.05 then
+            lastClickTime = now
+            if ByteNetReq and ByteNetReq.Parent then
+                pcall(function() ByteNetReq:FireServer(clickBuffer) end)
+            end
+        end
+    end
+end)
+
+dropdowns.FarmMode = SecGeneral.SecModeFarm:Dropdown({Title="Select Mode Farm",Values={"Tp","Tween"},Value="Tp",Callback=function(v) farmMode=v;TriggerSave() end})
+UI_Elements.TweenSpeed = SecGeneral.SecModeFarm:Input({Title="Speed Tween",Value="0.5",Placeholder="0.00 - 1.00",Callback=function(v) local n=tonumber(v);if n then tweenSpeed=math.clamp(n,0,1);TriggerSave() end end})
+
+UI_Elements.AutoRift = SecGeneral.AutoRift:Toggle({Title="Auto Rift",Value=false,Callback=function(s) autoRiftEnabled=s;TriggerSave() end})
+UI_Elements.AutoAbandon = SecGeneral.AbandonVillage:Toggle({Title="Auto Abandon Village (Boss)",Value=false,Callback=function(s) autoAbandonVillageEnabled=s;TriggerSave() end})
+dropdowns.SelectRaid = SecGeneral.AutoRaid:Dropdown({Title="Select Raid",Values=raidMapsList,Value=selectedRaidMap,Callback=function(v)
+    selectedRaidMap = v
+    if selectedRaidMap == "Double Dungeons" then
+        selectedRaidDifficulty = "Nightmare"
+        if dropdowns.SelectDifficulty then dropdowns.SelectDifficulty:SetValue("Nightmare") end
+    end
+    TriggerSave()
+end})
+dropdowns.SelectDifficulty = SecGeneral.AutoRaid:Dropdown({Title="Select Difficulty",Values={"Easy","Medium","Hard","Nightmare"},Value=selectedRaidDifficulty,Callback=function(v)
+    if selectedRaidMap == "Double Dungeons" and v ~= "Nightmare" then
+        selectedRaidDifficulty = "Nightmare"; dropdowns.SelectDifficulty:SetValue("Nightmare")
+    else 
+        selectedRaidDifficulty = v 
+    end
+    TriggerSave()
+end})
+dropdowns.CollectChest = SecGeneral.AutoRaid:Dropdown({Title="Collect Purple Chest",Values={"No","Yes"},Value=collectPurpleChest,Callback=function(v) collectPurpleChest=v;TriggerSave() end})
+UI_Elements.AutoRaid = SecGeneral.AutoRaid:Toggle({Title="Auto Raid",Value=false,Callback=function(s) autoRaidEnabled=s;TriggerSave() end})
+
+UI_Elements.AutoReplay = SecGeneral.AutoRaid:Toggle({Title="Auto Replay (Victory)",Value=false,Callback=function(s) 
+    autoReplayEnabled = s
+    if s and UI_Elements.AutoLeave then UI_Elements.AutoLeave:SetValue(false) end
+    TriggerSave() 
+end})
+UI_Elements.AutoLeave = SecGeneral.AutoRaid:Toggle({Title="Auto Leave (Victory)",Value=false,Callback=function(s) 
+    autoLeaveEnabled = s
+    if s and UI_Elements.AutoReplay then UI_Elements.AutoReplay:SetValue(false) end
+    TriggerSave() 
+end})
+
+Tabs.Teleport:Dropdown({Title="Select Map",Values={"Lobby","Namex Planet","Colosseum Kingdom","Demon Forest","Dungeons Town","Reaper Society", "Jujutsu Highschool"},Value="Lobby",Callback=function(v) selectedWarpMap=v end})
+Tabs.Teleport:Button({Title="Teleport",Callback=function()
+    if mapBuffers[selectedWarpMap] then
+        if ByteNetReq and ByteNetReq.Parent then
+            ByteNetReq:FireServer(buffer.fromstring(mapBuffers[selectedWarpMap]))
+        end
+    end
+end})
+
+Tabs.Setting:Section({Title="UI Settings"})
+Tabs.Setting:Keybind({Title="Keybind",Desc="Keybind to open ui",Value="RightAlt",Callback=function(v) Window:SetToggleKey(Enum.KeyCode[v]) end})
+
+task.spawn(function()
+    local optimizedFolders = {} 
+    while task.wait(2) do
+        if fpsBoostEnabled then
+            pcall(function()
+                local LightingService = game:GetService("Lighting")
+                LightingService:ClearAllChildren()
+                if LightingService.GlobalShadows then LightingService.GlobalShadows = false end
+                
+                local mapsFolder = Workspace:FindFirstChild("Maps")
+                if mapsFolder then
+                    for _, mapNode in ipairs(mapsFolder:GetChildren()) do
+                        local mapLighting = mapNode:FindFirstChild("Lighting")
+                        if mapLighting then mapLighting:Destroy() end
+                        
+                        local mapMaterials = mapNode:FindFirstChild("Materials")
+                        if mapMaterials then mapMaterials:Destroy() end
+                        
+                        if not optimizedFolders[mapNode] then
+                            for _, child in ipairs(mapNode:GetDescendants()) do
+                                if child:IsA("Folder") and child.Name == "Building" then
+                                    for _, part in ipairs(child:GetDescendants()) do
+                                        if part:IsA("BasePart") then
+                                            part.CastShadow = false
+                                            part.Reflectance = 0
+                                            if part.Material ~= Enum.Material.SmoothPlastic then
+                                                part.Material = Enum.Material.SmoothPlastic
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                            optimizedFolders[mapNode] = true 
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if hideRerollEnabled then
+        pcall(function()
+            local rerollUI = LP.PlayerGui:FindFirstChild("Rerolls_Visuals")
+            if rerollUI then
+                if rerollUI:IsA("ScreenGui") then rerollUI.Enabled = false end
+                rerollUI.Visible = false
+            end
+        end)
+    end
+
+    pcall(function()
+        local obtainUI = LP.PlayerGui:FindFirstChild("Obtaind_Visual")
+        if obtainUI then
+            if hideRewardEnabled then
+                if obtainUI:IsA("ScreenGui") then obtainUI.Enabled = false end
+                obtainUI.Visible = false
+            else
+                if obtainUI:IsA("ScreenGui") then obtainUI.Enabled = true end
+                obtainUI.Visible = true
+            end
+        end
+    end)
+end)
+
+local unpauseTime = 0
+task.spawn(function()
+    while task.wait(0.2) do
+        if fastRerollEnabled and isPremium then
+            pcall(function()
+                local rerollUI = LP.PlayerGui:FindFirstChild("Rerolls_Visuals")
+                    and LP.PlayerGui.Rerolls_Visuals:FindFirstChild("Rerolls")
+                local gamepassVal = RS:FindFirstChild("Players_Data")
+                    and RS.Players_Data:FindFirstChild(LP.Name)
+                    and RS.Players_Data[LP.Name]:FindFirstChild("Gamepasses")
+                    and RS.Players_Data[LP.Name].Gamepasses:FindFirstChild("Fast Rerolls")
+                if rerollUI and gamepassVal and gamepassVal:IsA("BoolValue") then
+                    gamepassVal.Value = not rerollUI.Visible
+                end
+            end)
+        end
+        if #selectedInventoryUnits > 0 then
+            local activeDisp = selectedInventoryUnits[1]
+            for _,uName in ipairs(selectedInventoryUnits) do
+                if unitStates[uName] ~= "done" then activeDisp = uName; break end
+            end
+            unitInfoParagraph:SetDesc(getUnitInfoText(activeDisp))
+        else
+            unitInfoParagraph:SetDesc("Please select a unit to display info.")
+        end
+        if dmgBoostEnabled and safeDmgBoostEnabled and isPremium then
+            if pauseDmgBoost then
+                if os_clock() >= unpauseTime then pauseDmgBoost = false end
+            else
+                pcall(function()
+                    local currentDPS = parseSuffixNumber(LP.PlayerGui.HUD._Frame.DPS.Numbers.Text)
+                    if currentDPS >= safeDpsLimit then pauseDmgBoost = true; unpauseTime = os_clock()+6 end
+                end)
+            end
+        end
+    end
+end)
+
+local function waitTalentChange(unitFolder,statName,oldVal)
+    local t = os_clock()
+    while os_clock()-t < 1.5 do
+        if not (autoTraitsEnabled or autoTalentsEnabled) then return false end
+        local newVal = safeGetNestedVal(unitFolder,"Potentials_Adjustment",statName)
+        if newVal == "N/A" then
+            if statName == "Abilities_DMG" then newVal = safeGetVal(unitFolder,"Ability_Talent")
+            elseif statName == "Critical_Damage" then newVal = safeGetVal(unitFolder,"Critical_Talent")
+            else newVal = safeGetVal(unitFolder,statName.."_Talent") end
+        end
+        if newVal ~= "N/A" and newVal ~= oldVal then return true end
+        task.wait(0.05)
+    end
+    return false
+end
+
+local function waitTraitChange(unitFolder,slotToRoll,oldVal)
+    local traitNode = slotToRoll == "Primary" and "Primary" or "Sub"
+    local legacyNode = slotToRoll == "Primary" and "Primary_Trait" or "Sub_Trait"
+    local t = os_clock()
+    while os_clock()-t < 1.5 do
+        if not (autoTraitsEnabled or autoTalentsEnabled) then return false end
+        local newVal = safeGetNestedVal(unitFolder,"Traits",traitNode)
+        if newVal == "N/A" then newVal = safeGetVal(unitFolder,legacyNode) end
+        if newVal ~= "N/A" and newVal ~= oldVal then return true end
+        task.wait(0.05)
+    end
+    return false
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        if not (autoTraitsEnabled or autoTalentsEnabled) or #selectedInventoryUnits == 0 then continue end
+        local activeUnitDisp = nil
+        for _,uName in ipairs(selectedInventoryUnits) do
+            if unitStates[uName] ~= "done" then activeUnitDisp = uName; break end
+        end
+        if not activeUnitDisp then continue end
+        local activeUnit = inventoryUnitsMap[activeUnitDisp]
+        if not activeUnit or not activeUnit.Parent then unitStates[activeUnitDisp] = "done"; continue end
+        unitStates[activeUnitDisp] = "rolling"
+        local _tTraits, _tTalents = targetTraits or {}, targetTalents or {}
+        local traitsDone, talentsDone = not autoTraitsEnabled or #_tTraits == 0, not autoTalentsEnabled or #_tTalents == 0
+        
+        if not traitsDone then
+            local currentPri = safeGetNestedVal(activeUnit,"Traits","Primary")
+            if currentPri == "N/A" then currentPri = safeGetVal(activeUnit,"Primary_Trait") end
+            local currentSub = safeGetNestedVal(activeUnit,"Traits","Sub")
+            if currentSub == "N/A" then currentSub = safeGetVal(activeUnit,"Sub_Trait") end
+            local internalTargets = {}
+            for _,t in ipairs(_tTraits) do if trait_check[t] then internalTargets[trait_check[t]] = t end end
+            local priGood, subGood = internalTargets[currentPri] ~= nil, internalTargets[currentSub] ~= nil
+            local slotToRoll, validArgs = nil, {}
+            if #_tTraits == 1 then
+                if priGood or subGood then traitsDone = true
+                else
+                    slotToRoll = (math.random()>0.5) and "Primary" or "Sub"
+                    local iName = trait_check[_tTraits[1]]; if iName then validArgs = {iName,iName} end
+                end
+            elseif #_tTraits >= 2 then
+                if priGood and subGood and currentPri ~= currentSub then traitsDone = true
+                elseif priGood and not subGood then
+                    slotToRoll = "Sub"
+                    for iName,_ in pairs(internalTargets) do if iName ~= currentPri then table.insert(validArgs,iName) end end
+                elseif subGood and not priGood then
+                    slotToRoll = "Primary"
+                    for iName,_ in pairs(internalTargets) do if iName ~= currentSub then table.insert(validArgs,iName) end end
+                elseif priGood and subGood and currentPri == currentSub then
+                    slotToRoll = "Sub"
+                    for iName,_ in pairs(internalTargets) do if iName ~= currentPri then table.insert(validArgs,iName) end end
+                else
+                    slotToRoll = "Primary"
+                    for iName,_ in pairs(internalTargets) do table.insert(validArgs,iName) end
+                end
+                if #validArgs == 0 then traitsDone = true end
+                if #validArgs == 1 then table.insert(validArgs,validArgs[1]) end
+            end
+            if not traitsDone and slotToRoll and #validArgs >= 2 then
+                local oldVal = (slotToRoll == "Primary") and currentPri or currentSub
+                FireOrInvokeRemote(Gamblings, "Traits", activeUnit.Name, slotToRoll, validArgs, false)
+                waitTraitChange(activeUnit,slotToRoll,oldVal); continue
+            end
+        end
+        
+        if traitsDone and not talentsDone then
+            local targetLayout = (talent_check[targetTalentTier] and talent_check[targetTalentTier].layout) or 0
+            local slotToRollTalent, oldValForRoll = nil, nil
+            for _,uiTalent in ipairs(_tTalents) do
+                local remStatName = talentUIToRemote[uiTalent]; if not remStatName then continue end
+                local valStr = safeGetNestedVal(activeUnit,"Potentials_Adjustment",remStatName)
+                if valStr == "N/A" then
+                    if remStatName == "Abilities_DMG" then valStr = safeGetVal(activeUnit,"Ability_Talent")
+                    elseif remStatName == "Critical_Damage" then valStr = safeGetVal(activeUnit,"Critical_Talent")
+                    else valStr = safeGetVal(activeUnit,remStatName.."_Talent") end
+                end
+                local l,_ = getStatLayoutAndTier(remStatName,valStr)
+                if l < targetLayout then slotToRollTalent = remStatName; oldValForRoll = valStr; break end
+            end
+            if not slotToRollTalent then talentsDone = true
+            else
+                FireOrInvokeRemote(Systems, "Potentials_Rolling", activeUnit.Name, "Reroll", slotToRollTalent)
+                waitTalentChange(activeUnit,slotToRollTalent,oldValForRoll); continue
+            end
+        end
+        if traitsDone and talentsDone then unitStates[activeUnitDisp] = "done"; task.wait(0.5) end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.2) do
+        if autoSummonEnabled then
+            currentActivity = "Auto Summoning"
+            local char = LP.Character; local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then continue end
+            local targetWorld = nil
+            if savedSummonWorld and savedSummonPos then targetWorld = savedSummonWorld
+            elseif selectedEgg ~= "" then targetWorld = getMapFromEgg(selectedEgg) end
+            local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
+            local currentStage = myData and myData:FindFirstChild("Data") and myData.Data:FindFirstChild("OnStage") and myData.Data.OnStage.Value or ""
+            
+            if targetWorld and targetWorld ~= "" and currentStage ~= targetWorld then
+                if mapBuffers[targetWorld] and ByteNetReq and ByteNetReq.Parent then
+                    ByteNetReq:FireServer(buffer.fromstring(mapBuffers[targetWorld]))
+                    if not smartWait(3, function() return autoSummonEnabled end) then continue end
+                end
+                continue
+            end
+            
+            local targetPos = nil
+            if savedSummonWorld and savedSummonPos then targetPos = savedSummonPos
+            elseif selectedEgg ~= "" then
+                local eggModel = Workspace:FindFirstChild("Summoners") and Workspace.Summoners:FindFirstChild(selectedEgg)
+                if eggModel then targetPos = eggModel:GetPivot().Position end
+            end
+            
+            if targetPos then
+                local dist = (hrp.Position-targetPos).Magnitude
+                if dist > 6 then 
+                    teleportToPosition(targetPos,true)
+                    if not smartWait(0.2, function() return autoSummonEnabled end) then continue end
+                end
+                pcall(function() RS.Remotes.Summoners.Hatch:FireServer(true) end)
+            end
+        end
+    end
+end)
+
+local function getPromptBasePart(prm)
+    if not prm then return nil end
+    local p = prm.Parent; if not p then return nil end
+    if p:IsA("BasePart") then return p end
+    if p:IsA("Model") then
+        if p.PrimaryPart then return p.PrimaryPart end
+        return p:FindFirstChildWhichIsA("BasePart",true)
+    end
+    local gp = p.Parent
+    if gp then
+        if gp:IsA("BasePart") then return gp end
+        if gp:IsA("Model") then
+            if gp.PrimaryPart then return gp.PrimaryPart end
+            return gp:FindFirstChildWhichIsA("BasePart",true)
+        end
+    end
+    return nil
+end
+
+local function getPriorityCheck()
+    local riftSpawned = false
+    local spawnedRiftsFolder = Workspace:FindFirstChild("SpawnedRifts")
+    if spawnedRiftsFolder and #spawnedRiftsFolder:GetChildren() > 0 then riftSpawned = true end
+    for _,mon in ipairs(Server:GetChildren()) do
+        if string_sub(mon.Name, 1, 5) == "Rifts" then riftSpawned = true; break end
+    end
+    
+    if not riftSpawned then hasTeleportedToLobbyForRift = false end 
+    
+    local bossValues = RS:FindFirstChild("Values")
+        and RS.Values:FindFirstChild("Gamemodes")
+        and RS.Values.Gamemodes:FindFirstChild("BossFights")
+        and RS.Values.Gamemodes.BossFights:FindFirstChild("Bosses")
+    local bossSpawned = bossValues and bossValues.Value ~= ""
+    local currentlyInRaid = false
+    local raidsVisual = Workspace:FindFirstChild("Raids_Visual")
+    if raidsVisual then
+        local tStr1 = "_Server_"..LP.Name
+        local tStr2 = "_Clients_"..LP.Name
+        for _,f in ipairs(raidsVisual:GetChildren()) do
+            if string.find(f.Name, tStr1, 1, true) or string.find(f.Name, tStr2, 1, true) then
+                currentlyInRaid = true; break
+            end
+        end
+    end
+    
+    return riftSpawned, bossSpawned, currentlyInRaid
+end
+
+local function getSukunaData()
+    local inv = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name) and RS.Players_Data[LP.Name]:FindFirstChild("Inventory")
+    local res = inv and inv:FindFirstChild("Resources")
+    local birdcage = res and res:FindFirstChild("Domain Birdcage")
+    local amt = birdcage and birdcage:FindFirstChild("Amount")
+    if amt and type(amt.Value) == "number" and amt.Value > 0 then
+        return true
+    end
+    return false
+end
+
+local function hasSuccessfullyAttacked(monModel)
+    if not monModel then return false end
+    local saviors = monModel:FindFirstChild("Saviors")
+    if saviors then
+        for _, val in ipairs(saviors:GetChildren()) do
+            if val:IsA("StringValue") and val.Value == LP.Name then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function attackMonster(targetMon, isEnabledFunc)
+    local activeTween = nil
+    local firstMoveDone = false
+    local ATTACK_RANGE = 10 
+
+    while targetMon and targetMon.Model and targetMon.Model.Parent == Server do
+        if isEnabledFunc and not isEnabledFunc() then 
+            if activeTween then activeTween:Cancel(); activeTween = nil end
+            break 
+        end
+        
+        if not targetMon.Humanoid or targetMon.Humanoid.Health <= 0 then break end
+        local char = LP.Character
+        local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+        if not pHRP then break end
+        
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and not char:FindFirstChildOfClass("Tool") then
+            local bpTool = LP.Backpack:FindFirstChildOfClass("Tool")
+            if bpTool then hum:EquipTool(bpTool) end
+        end
+        
+        if not targetMon.HRP then break end
+        local destPos = targetMon.HRP.Position
+        
+        local dist = (pHRP.Position - destPos).Magnitude
+        
+        if not firstMoveDone or dist > ATTACK_RANGE then
+            if farmMode == "Tween" then
+                if not activeTween or activeTween.PlaybackState ~= Enum.PlaybackState.Playing then
+                    activeTween = tweenToPosition(destPos)
+                end
+            else
+                teleportToPosition(destPos, true)
+                task.wait(0.05)
+            end
+            firstMoveDone = true
+        end
+        
+        local checkDist = (pHRP.Position - targetMon.HRP.Position).Magnitude
+        
+        if checkDist <= ATTACK_RANGE then
+            if activeTween then activeTween:Cancel(); activeTween = nil end
+            
+            if not hasSuccessfullyAttacked(targetMon.Model) then
+                pcall(function() RequestReq:FireServer(targetMon.Model.Name, "Mouse") end)
+            end
+            
+        elseif farmMode == "Tp" and checkDist > ATTACK_RANGE and firstMoveDone then
+            teleportToPosition(targetMon.HRP.Position, true)
+        end
+        
+        task.wait(0.05)
+    end
+    if activeTween then activeTween:Cancel() end
+end
+
+local function findMyRaidFolder()
+    local rv = Workspace:FindFirstChild("Raids_Visual"); if not rv then return nil end
+    local tStr = LP.Name
+    for _,f in ipairs(rv:GetChildren()) do
+        if not string.find(f.Name, "_Rift_", 1, true) and string.find(f.Name, tStr, 1, true) then
+            return f
+        end
+    end
+    return nil
+end
+
+local function findMyRiftFolder()
+    local rv = Workspace:FindFirstChild("Raids_Visual"); if not rv then return nil end
+    for _,f in ipairs(rv:GetChildren()) do
+        if string.find(f.Name, "_Rift_", 1, true) then return f end
+    end
+    return nil
+end
+
+local function collectRaidChests(others)
+    if raidCollecting then return end
+    raidCollecting = true
+    local rewardsFolder = others and others:FindFirstChild("Rewards")
+    if not rewardsFolder then raidCollecting = false; raidChestDone = true; return end
+
+    local resultList = {}
+    local function scanChests(folder)
+        if not folder or not folder.Parent then return end
+        for _,obj in ipairs(folder:GetChildren()) do
+            if collectPurpleChest == "No" and string.find(string.lower(obj.Name), "purple", 1, true) then continue end
+            local prm = obj:FindFirstChildWhichIsA("ProximityPrompt",true)
+            if prm and prm.Enabled then
+                local part = getPromptBasePart(prm)
+                if part and part.Parent then table.insert(resultList,{prm=prm,part=part}) end
+            end
+            if obj:IsA("Folder") or obj:IsA("Model") then scanChests(obj) end
+        end
+    end
+    scanChests(rewardsFolder)
+
+    local ch0 = LP.Character; local ref = (ch0 and ch0:FindFirstChild("HumanoidRootPart")) and ch0.HumanoidRootPart.Position or Vector3.zero
+    table.sort(resultList,function(a,b)
+        local pa = (a.part and a.part.Parent) and a.part.Position or Vector3.zero
+        local pb = (b.part and b.part.Parent) and b.part.Position or Vector3.zero
+        return (ref-pa).Magnitude < (ref-pb).Magnitude
+    end)
+
+    for _,chest in ipairs(resultList) do
+        if not autoRaidEnabled then break end 
+        local prm, part = chest.prm, chest.part
+        if not prm or not prm.Parent or not part or not part.Parent then continue end
+        local tries = 0
+        while autoRaidEnabled and prm and prm.Parent and prm.Enabled and tries < 30 do
+            tries = tries+1
+            local ch = LP.Character; local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+            if hrp and part.Parent then
+                local dv = hrp.Position-part.Position
+                if dv.Magnitude > 20 then 
+                    teleportToPosition(part.Position, true)
+                end
+            end
+            pcall(function() fireproximityprompt(prm, 1, true) end)
+            task.wait(0.1)
+        end
+        task.wait(0.04)
+    end
+    
+    raidCollecting = false
+    if not autoRaidEnabled then return end 
+    raidChestDone = true
+end
+
+local function handleRaidEnd(tPP, tPart)
+    if raidExiting then return end
+    raidExiting = true
+    
+    local victoryTime = nil
+    local actionTaken = false
+    local deadline = os_clock() + 45 
+    
+    while autoRaidEnabled and os_clock() < deadline do
+        local victoryUI = LP.PlayerGui:FindFirstChild("Victory")
+        
+        if victoryUI and victoryUI:IsA("ScreenGui") and victoryUI.Enabled then
+            if not victoryTime then victoryTime = os_clock() end
+            
+            if os_clock() - victoryTime >= 30 then
+                pcall(function() RS.Remotes.Gameplays.RaidAction:FireServer("Leave") end)
+                actionTaken = true
+                task.wait(3)
+                break
+            end
+            
+            if autoReplayEnabled then
+                pcall(function() RS.Remotes.Gameplays.RaidAction:FireServer("Replay") end)
+                actionTaken = true
+                task.wait(3) 
+                break
+            elseif autoLeaveEnabled then
+                pcall(function() RS.Remotes.Gameplays.RaidAction:FireServer("Leave") end)
+                actionTaken = true
+                task.wait(3) 
+                break
+            end
+        else
+            if tPP and tPP.Parent and tPP.Enabled then
+                local ch = LP.Character
+                local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+                if hrp and tPart and tPart.Parent then
+                    local dv = hrp.Position - tPart.Position
+                    if dv.Magnitude > 5 then
+                        teleportToPosition(tPart.Position + Vector3.new(0, 1.5, 0), true)
+                    end
+                end
+                pcall(function() fireproximityprompt(tPP, 1, true) end)
+            end
+        end
+        
+        task.wait(0.2)
+    end
+    
+    currentRaidFolder = nil
+    raidChestDone = false
+    raidCollecting = false
+    raidExiting = false
+    raidTransitionTime = 0 
+end
+
+local function findNearestMonsterInList()
+    local char = LP.Character
+    local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+    if not pHRP then return nil end
+    local targetMon, nearestDist = nil, math.huge
+    for _,mon in ipairs(Server:GetChildren()) do
+        local mName = modelNameToDisplay[mon.Name]
+        if mName and table_find(selectedMonsters,mName) then
+            local hum = mon:FindFirstChildOfClass("Humanoid") or mon:FindFirstChild("Humanoid")
+            local hrp = mon:FindFirstChild("HumanoidRootPart") or mon:FindFirstChild("Torso") or mon:FindFirstChild("UpperTorso")
+            if hum and hum.Health > 0 and hrp then
+                local dist = (pHRP.Position-hrp.Position).Magnitude
+                if dist < nearestDist then nearestDist = dist; targetMon = {Model=mon,HRP=hrp,Humanoid=hum} end
+            end
+        end
+    end
+    return targetMon, nearestDist
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        local newActivity = "Idle / Standing By"
+        local doingSomething = false
+
+        local char = LP.Character
+        local pHRP = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+        if not pHRP then 
+            currentActivity = newActivity
+            continue 
+        end
+
+        local myData = RS:FindFirstChild("Players_Data") and RS.Players_Data:FindFirstChild(LP.Name)
+        local onStageV = myData and myData:FindFirstChild("Data") and myData.Data:FindFirstChild("OnStage")
+        local currentStage = onStageV and onStageV.Value or ""
+        
+        local visualFolder = Workspace:FindFirstChild("Visual")
+        local bossUI = LP.PlayerGui:FindFirstChild("Gamemodes") and LP.PlayerGui.Gamemodes:FindFirstChild("GlobalBosses")
+        local inGlobalBossMatch = (bossUI and bossUI.Visible == true)
+
+        if autoCursedFingerEnabled and visualFolder and not inGlobalBossMatch then
+            local targetSukuna = nil
+            for _, v in ipairs(visualFolder:GetChildren()) do
+                if string_sub(v.Name, 1, 6) == "Sukuna" then
+                    targetSukuna = v
+                    break
+                end
+            end
+            
+            if targetSukuna then
+                newActivity = "Collecting Cursed Finger"
+                doingSomething = true
+                local targetPos = nil
+                if targetSukuna:IsA("Model") then
+                    targetPos = targetSukuna.PrimaryPart and targetSukuna.PrimaryPart.Position or targetSukuna:GetPivot().Position
+                elseif targetSukuna:IsA("BasePart") then
+                    targetPos = targetSukuna.Position
+                end
+                
+                local prompt = targetSukuna:FindFirstChildWhichIsA("ProximityPrompt", true)
+                
+                if targetPos then teleportToPosition(targetPos, true) end
+                if prompt then pcall(function() fireproximityprompt(prompt, 1, true) end) end
+                
+                currentActivity = newActivity
+                continue 
+            end
+        end
+        
+        if autoDragonBallEnabled and visualFolder and not inGlobalBossMatch then
+            local targetDB = nil
+            for _, v in ipairs(visualFolder:GetChildren()) do
+                if string_sub(v.Name, 1, 10) == "DragonBall" then
+                    targetDB = v
+                    break
+                end
+            end
+            
+            if targetDB then
+                newActivity = "Collecting Dragon Ball"
+                doingSomething = true
+                local targetPos = nil
+                if targetDB:IsA("Model") then
+                    targetPos = targetDB.PrimaryPart and targetDB.PrimaryPart.Position or targetDB:GetPivot().Position
+                elseif targetDB:IsA("BasePart") then
+                    targetPos = targetDB.Position
+                end
+                
+                local prompt = targetDB:FindFirstChildWhichIsA("ProximityPrompt", true)
+                
+                if targetPos then teleportToPosition(targetPos, true) end
+                if prompt then pcall(function() fireproximityprompt(prompt, 1, true) end) end
+                
+                currentActivity = newActivity
+                continue
+            end
+        end
+
+        if autoSukunaEnabled then
+            local shrineVisual = Workspace:FindFirstChild("GlobalBosses_Visual") and Workspace.GlobalBosses_Visual:FindFirstChild("Sukuna_Shrine")
+            if shrineVisual then
+                local malShrine = shrineVisual:FindFirstChild("Stage") and shrineVisual.Stage:FindFirstChild("Malevolent_Shrine")
+                if malShrine then pcall(function() malShrine:Destroy() end) end
+            end
+
+            local entering = Workspace:FindFirstChild("GlobalBosses_Entering") and Workspace.GlobalBosses_Entering:FindFirstChild("Sukuna_Shrine")
+            
+            local isBossDead = false
+            if shrineVisual then
+                local enemiesVal = shrineVisual:FindFirstChild("Configs") and shrineVisual.Configs:FindFirstChild("Others") and shrineVisual.Configs.Others:FindFirstChild("Enemies")
+                if enemiesVal and enemiesVal:IsA("IntValue") and enemiesVal.Value <= 0 then
+                    isBossDead = true
+                end
+            end
+
+            if inGlobalBossMatch then
+                if isBossDead then
+                    if currentStage ~= "Lobby" then
+                        newActivity = "Waiting for Lobby Return (Sukuna Defeated)"
+                        doingSomething = true
+                        currentActivity = newActivity
+                        continue 
+                    end
+                else
+                    newActivity = "Fighting Sukuna Boss"
+                    doingSomething = true
+                    local function findGlobalBoss()
+                        for _,mon in ipairs(Server:GetChildren()) do
+                            if string_sub(mon.Name, 1, 12) == "GlobalBosses" then
+                                local hum = mon:FindFirstChildOfClass("Humanoid")
+                                local hrp = mon:FindFirstChild("HumanoidRootPart") or mon:FindFirstChild("Torso")
+                                if hum and hum.Health > 0 and hrp then
+                                    return {Model=mon, HRP=hrp, Humanoid=hum}
+                                end
+                            end
+                        end
+                        return nil
+                    end
+                    
+                    local gBoss = findGlobalBoss()
+                    if gBoss then
+                        attackMonster(gBoss, function() return autoSukunaEnabled and (bossUI and bossUI.Visible == true) end)
+                    end
+                    currentActivity = newActivity
+                    continue
+                end
+            elseif entering then
+                newActivity = "Entering Sukuna Shrine"
+                doingSomething = true
+                local tPos = entering:IsA("Model") and (entering.PrimaryPart and entering.PrimaryPart.Position or entering:GetPivot().Position) or entering.Position
+                local prm = entering:FindFirstChildWhichIsA("ProximityPrompt", true)
+                
+                if tPos then teleportToPosition(tPos, true) end
+                if prm then pcall(function() fireproximityprompt(prm, 1, true) end) end
+                currentActivity = newActivity
+                continue
+            else
+                if getSukunaData() then
+                    newActivity = "Spawning Sukuna Boss"
+                    doingSomething = true
+                    pcall(function() Remotes.Misc.TalkingEvent:FireServer("Mahito") end)
+                    task.wait(0.5) 
+                    currentActivity = newActivity
+                    continue
+                end
+            end
+        end
+
+        local riftSpawned, bossSpawned, currentlyInRaid = getPriorityCheck()
+
+        local latestRaidFolder = findMyRaidFolder()
+        local latestRiftFolder = findMyRiftFolder()
+
+        if latestRaidFolder ~= currentRaidFolder then
+            currentRaidFolder = latestRaidFolder
+            raidStarted = false; raidChestDone = false
+            raidCollecting = false; raidExiting = false
+        end
+        if latestRiftFolder ~= currentRiftFolder then
+            currentRiftFolder = latestRiftFolder; riftStarted = false
+        end
+
+        local insideRaid = currentRaidFolder ~= nil
+        local insideRift = currentRiftFolder ~= nil
+
+        if autoRiftEnabled and riftSpawned and not insideRift then
+            newActivity = "Moving to Rift"
+            doingSomething = true
+            if currentStage ~= "Lobby" or not hasTeleportedToLobbyForRift then
+                if ByteNetReq and ByteNetReq.Parent then
+                    ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Lobby"]))
+                end
+                hasTeleportedToLobbyForRift = true
+                if not smartWait(3.5, function() return autoRiftEnabled end) then 
+                    currentActivity = newActivity
+                    continue 
+                end
+            else
+                local spawnedRiftsFolder = Workspace:FindFirstChild("SpawnedRifts")
+                if spawnedRiftsFolder and #spawnedRiftsFolder:GetChildren() > 0 then
+                    for _,riftModel in ipairs(spawnedRiftsFolder:GetChildren()) do
+                        local rPos = riftModel.PrimaryPart and riftModel.PrimaryPart.Position or riftModel:GetPivot().Position
+                        if rPos then teleportToPosition(rPos, true) end
+                        local prompt = riftModel:FindFirstChildOfClass("ProximityPrompt",true)
+                        if prompt then SafeFirePrompt(prompt) end
+                        task.wait(0.2); break
+                    end
+                end
+            end
+            currentActivity = newActivity
+
+        elseif autoRiftEnabled and insideRift and currentRiftFolder then
+            newActivity = "Clearing Rift"
+            doingSomething = true
+            local cfgs = currentRiftFolder:FindFirstChild("Configs")
+            local others = cfgs and cfgs:FindFirstChild("Others")
+            local portal = others and others:FindFirstChild("Portal")
+            local travelF = portal and portal:FindFirstChild("Travel")
+            local tPP = travelF and travelF:FindFirstChildWhichIsA("ProximityPrompt",true)
+            local tPart = tPP and getPromptBasePart(tPP)
+            if tPP and tPP.Enabled and tPart then
+                local dest = tPart.Position
+                while autoRiftEnabled and tPP and tPP.Parent and tPP.Enabled do
+                    local ch = LP.Character; local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local dv = hrp.Position-dest
+                        if dv.Magnitude > 5 then
+                            teleportToPosition(dest+Vector3.new(0,1.5,0), true)
+                        end
+                    end
+                    SafeFirePrompt(tPP)
+                    task.wait(0.2)
+                end
+            else
+                local function findRiftMon()
+                    for _,mon in ipairs(Server:GetChildren()) do
+                        if string_sub(mon.Name, 1, 5) == "Rifts" then
+                            local hum = mon:FindFirstChildOfClass("Humanoid")
+                            local hrp = mon:FindFirstChild("HumanoidRootPart")
+                            if hum and hum.Health > 0 and hrp then
+                                return {Model=mon,HRP=hrp,Humanoid=hum}
+                            end
+                        end
+                    end
+                    return nil
+                end
+                local tMon = findRiftMon()
+                if tMon then attackMonster(tMon, function() return autoRiftEnabled end) end
+            end
+            currentActivity = newActivity
+
+        elseif autoRaidEnabled and insideRaid and currentRaidFolder then
+            newActivity = "Doing Raid: " .. tostring(selectedRaidMap)
+            doingSomething = true
+            local cfgs = currentRaidFolder:FindFirstChild("Configs")
+            local others = cfgs and cfgs:FindFirstChild("Others")
+            local portal = others and others:FindFirstChild("Portal")
+            local travelF = portal and portal:FindFirstChild("Travel")
+            local tPP = travelF and travelF:FindFirstChildWhichIsA("ProximityPrompt",true)
+            local tPart = tPP and getPromptBasePart(tPP)
+            local cleared = tPP and tPP.Enabled == true
+
+            if cleared then
+                if not raidChestDone and not raidCollecting then
+                    task_spawn(function() collectRaidChests(others) end)
+                elseif raidChestDone and not raidExiting then
+                    task_spawn(function() handleRaidEnd(tPP, tPart) end)
+                end
+            else
+                if not raidCollecting and not raidExiting then
+                    local function findRaidMon()
+                        local tMon, nDist = nil, math.huge
+                        for _,mon in ipairs(Server:GetChildren()) do
+                            if string_sub(mon.Name, 1, 5) == "Raids" then
+                                local whitelist = mon:FindFirstChild("Whitelist")
+                                local isMyRaid = false
+                                if whitelist then
+                                    if whitelist:FindFirstChild(LP.Name) then
+                                        isMyRaid = true
+                                    else
+                                        for _, v in ipairs(whitelist:GetChildren()) do
+                                            if v:IsA("StringValue") and v.Value == LP.Name then
+                                                isMyRaid = true
+                                                break
+                                            end
+                                        end
+                                    end
+                                end
+                                
+                                if isMyRaid then
+                                    local hum = mon:FindFirstChildOfClass("Humanoid")
+                                    local hrp = mon:FindFirstChild("HumanoidRootPart")
+                                    if hum and hum.Health > 0 and hrp then
+                                        local dist = (pHRP.Position-hrp.Position).Magnitude
+                                        if dist < nDist then nDist = dist; tMon = {Model=mon,HRP=hrp,Humanoid=hum} end
+                                    end
+                                end
+                            end
+                        end
+                        return tMon
+                    end
+                    
+                    local targetMon = findRaidMon()
+                    if targetMon then attackMonster(targetMon, function() return autoRaidEnabled end) end
+                end
+            end
+            currentActivity = newActivity
+
+        elseif autoAbandonVillageEnabled and bossSpawned then
+            newActivity = "Doing Abandon Village Boss"
+            doingSomething = true
+            if currentStage ~= "Demon Forest" then
+                if ByteNetReq and ByteNetReq.Parent then
+                    ByteNetReq:FireServer(buffer.fromstring(mapBuffers["Demon Forest"]))
+                end
+                if not smartWait(2, function() return autoAbandonVillageEnabled end) then 
+                    currentActivity = newActivity
+                    continue 
+                end
+            else
+                local bossUI = LP.PlayerGui:FindFirstChild("Gamemodes") and LP.PlayerGui.Gamemodes:FindFirstChild("BossFight")
+                if not (bossUI and bossUI.Visible == true) then
+                    local bossEnterModel = Workspace:FindFirstChild("BossFight_Entering") and Workspace.BossFight_Entering:FindFirstChild("Demon Forest")
+                    if bossEnterModel then
+                        local destPos = bossEnterModel:IsA("Model")
+                            and (bossEnterModel.PrimaryPart and bossEnterModel.PrimaryPart.Position or bossEnterModel:GetPivot().Position)
+                            or bossEnterModel.Position
+                        teleportToPosition(destPos,true)
+                    end
+                    if not smartWait(2, function() return autoAbandonVillageEnabled end) then 
+                        currentActivity = newActivity
+                        continue 
+                    end
+                else
+                    local function findBossMon()
+                        for _,mon in ipairs(Server:GetChildren()) do
+                            if string_sub(mon.Name, 1, 9) == "BossFight" then
+                                local hum = mon:FindFirstChildOfClass("Humanoid")
+                                local hrp = mon:FindFirstChild("HumanoidRootPart")
+                                if hum and hum.Health > 0 and hrp then
+                                    return {Model=mon,HRP=hrp,Humanoid=hum}
+                                end
+                            end
+                        end
+                        return nil
+                    end
+                    local targetMon = findBossMon()
+                    if targetMon then attackMonster(targetMon, function() return autoAbandonVillageEnabled end) end
+                end
+            end
+            currentActivity = newActivity
+
+        elseif autoRaidEnabled and not insideRaid then
+            newActivity = "Queuing for Raid"
+            doingSomething = true
+            if os_clock() - raidTransitionTime < 15 then
+                currentActivity = newActivity
+                task.wait(0.5)
+                continue 
+            end
+
+            local mapTarget = "Lobby"
+            if selectedRaidMap == "Double Dungeons" then mapTarget = "Dungeons Town"
+            elseif selectedRaidMap == "Jujutsu Highschool" then mapTarget = "Jujutsu Highschool" end
+
+            if currentStage ~= mapTarget then
+                if ByteNetReq and ByteNetReq.Parent then
+                    ByteNetReq:FireServer(buffer.fromstring(mapBuffers[mapTarget] or mapBuffers["Lobby"]))
+                end
+                if not smartWait(2.5, function() return autoRaidEnabled end) then 
+                    currentActivity = newActivity
+                    continue 
+                end
+            else
+                local raidsEntering = Workspace:FindFirstChild("Raids_Entering")
+                if raidsEntering then
+                    local targetPod = nil
+                    
+                    if selectedRaidMap == "Double Dungeons" then
+                        targetPod = raidsEntering:FindFirstChild("Specify")
+                    else
+                        for _, pod in ipairs(raidsEntering:GetChildren()) do
+                            if pod.Name ~= "Specify" then
+                                local holdersVal = pod:FindFirstChild("Holders")
+                                if holdersVal and holdersVal.Value == LP.Name then
+                                    targetPod = pod
+                                    break
+                                end
+                            end
+                        end
+                        if not targetPod then
+                            for _, pod in ipairs(raidsEntering:GetChildren()) do
+                                if pod.Name ~= "Specify" then
+                                    local holdersVal = pod:FindFirstChild("Holders")
+                                    if holdersVal and (holdersVal.Value == "" or holdersVal.Value == " ") then
+                                        targetPod = pod
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+
+                    if targetPod then
+                        local padCenter = targetPod:FindFirstChild("Centers") or targetPod:FindFirstChildWhichIsA("BasePart")
+                        local padPos = padCenter and padCenter.Position 
+                            or (targetPod:IsA("Model") and (targetPod.PrimaryPart and targetPod.PrimaryPart.Position or targetPod:GetPivot().Position) 
+                            or targetPod.Position)
+
+                        if padPos then
+                            local flatHRP = Vector3.new(pHRP.Position.X, 0, pHRP.Position.Z)
+                            local flatPad = Vector3.new(padPos.X, 0, padPos.Z)
+                            
+                            if (flatHRP - flatPad).Magnitude > 4 then
+                                teleportToPosition(padPos + Vector3.new(0, 1.5, 0), true)
+                                padConfirmedTime = 0
+                                task.wait(0.2)
+                            else
+                                local holdersVal = targetPod:FindFirstChild("Holders")
+                                local raidUI = LP.PlayerGui:FindFirstChild("Raids")
+                                
+                                local isMyPod = (holdersVal and holdersVal.Value == LP.Name)
+                                local isUIOpen = (raidUI and raidUI.Enabled == true)
+
+                                if isMyPod and isUIOpen then
+                                    pcall(function()
+                                        local pScroll = raidUI:FindFirstChild("_Frame") 
+                                            and raidUI._Frame:FindFirstChild("Usage") 
+                                            and raidUI._Frame.Usage:FindFirstChild("Center") 
+                                            and raidUI._Frame.Usage.Center:FindFirstChild("PlayersScrolling")
+                                        
+                                        if pScroll then
+                                            local count = 1
+                                            for _, item in ipairs(pScroll:GetChildren()) do
+                                                if item:IsA("GuiObject") then
+                                                    local nameChanged = false
+                                                    for _, v in ipairs(item:GetDescendants()) do
+                                                        if v:IsA("TextLabel") and (v.Text == LP.Name or string.find(string.lower(v.Name), "name", 1, true) or string.find(v.Text, "Enchant Hub", 1, true)) then
+                                                            if not string.find(v.Text, "Enchant Hub", 1, true) then
+                                                                v.Text = "Enchant Hub " .. tostring(count)
+                                                            end
+                                                            nameChanged = true
+                                                        end
+                                                    end
+                                                    if nameChanged then count = count + 1 end
+                                                end
+                                            end
+                                        end
+                                    end)
+
+                                    if padConfirmedTime == 0 then padConfirmedTime = os_clock() end
+                                    
+                                    if os_clock() - padConfirmedTime >= 2.0 then
+                                        pcall(function() RS.Remotes.Systems.RaidsEvent:FireServer(selectedRaidMap, selectedRaidDifficulty) end)
+                                        pcall(function() RS.Remotes.Systems.Raids:FireServer(selectedRaidMap, selectedRaidDifficulty) end)
+                                        
+                                        raidTransitionTime = os_clock()
+                                        padConfirmedTime = 0 
+                                    end
+                                else
+                                    padConfirmedTime = 0 
+                                    task.wait(0.1)
+                                end
+                            end
+                        end
+                    else
+                        task.wait(0.5)
+                    end
+                else
+                    task.wait(0.5)
+                end
+            end
+            currentActivity = newActivity
+
+        elseif autoFarmEnabled and selectedMonsters[1] then
+            newActivity = "Auto Farming Monsters"
+            doingSomething = true
+            local targetMon = findNearestMonsterInList()
+            if targetMon then attackMonster(targetMon, function() return autoFarmEnabled end) end
+            currentActivity = newActivity
+        end
+        
+        if not doingSomething then
+            currentActivity = "Idle / Standing By"
+        end
+    end
 end)
